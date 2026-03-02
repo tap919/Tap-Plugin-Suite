@@ -142,6 +142,7 @@ float CompressorProcessor::gainReductionDb() const {
 void EqProcessor::prepare(double sampleRate) {
   sampleRate_ = sampleRate;
   updateFilters();
+  reset();
 }
 
 void EqProcessor::setParams(const Params& params) {
