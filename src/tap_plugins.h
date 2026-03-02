@@ -104,6 +104,9 @@ class EqProcessor {
   void process(AudioBufferView buffer);
   // Apply a role-based starting EQ curve.
   void loadRolePreset(TrackRole role);
+  // Compute the combined EQ magnitude response at the given frequency (dB).
+  // Sums the response of all enabled bands; useful for drawing the EQ curve.
+  float computeMagnitudeDb(float frequency) const;
 
  private:
   void updateFilters();
@@ -221,12 +224,23 @@ class TapeDelayProcessor {
     bool tempoSync = false;
     float bpm = 120.0f;          // Host BPM used when tempoSync is true.
     float beatDivision = 0.25f;  // Note fraction (e.g. 0.25 = 1/4 note).
+    // Ducking: when the dry input (or sidechain) is above duckThresholdDb, the
+    // wet delay signal is attenuated by duckAmount (0=off, 1=full duck).
+    // Ideal for rap vocals: echoes are quiet while the artist is rapping and
+    // bloom back in the gaps.
+    float duckThresholdDb = -30.0f;
+    float duckAmount = 0.0f;   // 0 = disabled, 1 = full wet attenuation.
+    float duckAttackMs = 5.0f;
+    float duckReleaseMs = 150.0f;
   };
 
   void prepare(double sampleRate);
   void setParams(const Params& params);
   void reset();
   void process(AudioBufferView buffer);
+  // Same as process() but uses sidechain to drive ducking instead of the dry
+  // input.  Pass {nullptr, nullptr, 0} to use the dry input as the detector.
+  void processWithSidechain(AudioBufferView buffer, AudioBufferView sidechain);
 
  private:
   void updateDelaySamples();
@@ -244,6 +258,10 @@ class TapeDelayProcessor {
   OnePoleLowpass feedbackLpRight_;
   OnePoleHighpass feedbackHpLeft_;
   OnePoleHighpass feedbackHpRight_;
+  // Duck-envelope state.
+  float duckEnvelope_ = 0.0f;
+  float duckAttackCoeff_ = 0.0f;
+  float duckReleaseCoeff_ = 0.0f;
 };
 
 class ConvolutionReverbProcessor {

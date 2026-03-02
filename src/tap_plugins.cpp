@@ -393,6 +393,16 @@ void EqProcessor::loadRolePreset(TrackRole role) {
   updateFilters();
 }
 
+float EqProcessor::computeMagnitudeDb(float frequency) const {
+  if (sampleRate_ <= 0.0) return 0.0f;
+  float totalDb = 0.0f;
+  for (std::size_t i = 0; i < params_.bands.size(); ++i) {
+    if (!params_.bands[i].enabled) continue;
+    totalDb += leftFilters_[i].magnitudeResponseDb(frequency, sampleRate_);
+  }
+  return totalDb;
+}
+
 void LimiterProcessor::prepare(double sampleRate) {
   sampleRate_ = sampleRate;
   releaseCoeff_ = timeMsToCoeff(params_.releaseMs, sampleRate_);
@@ -710,6 +720,8 @@ void TapeDelayProcessor::prepare(double sampleRate) {
   feedbackLpRight_.setCutoff(params_.lowpassHz, sampleRate);
   feedbackHpLeft_.setCutoff(params_.highpassHz, sampleRate);
   feedbackHpRight_.setCutoff(params_.highpassHz, sampleRate);
+  duckAttackCoeff_  = timeMsToCoeff(params_.duckAttackMs,  sampleRate);
+  duckReleaseCoeff_ = timeMsToCoeff(params_.duckReleaseMs, sampleRate);
   updateDelaySamples();
   reset();
 }
@@ -720,6 +732,8 @@ void TapeDelayProcessor::setParams(const Params& params) {
   feedbackLpRight_.setCutoff(params_.lowpassHz, sampleRate_);
   feedbackHpLeft_.setCutoff(params_.highpassHz, sampleRate_);
   feedbackHpRight_.setCutoff(params_.highpassHz, sampleRate_);
+  duckAttackCoeff_  = timeMsToCoeff(params_.duckAttackMs,  sampleRate_);
+  duckReleaseCoeff_ = timeMsToCoeff(params_.duckReleaseMs, sampleRate_);
   updateDelaySamples();
 }
 
@@ -727,6 +741,7 @@ void TapeDelayProcessor::reset() {
   std::fill(delayLeft_.begin(), delayLeft_.end(), 0.0f);
   std::fill(delayRight_.begin(), delayRight_.end(), 0.0f);
   writeIndex_ = 0;
+  duckEnvelope_ = 0.0f;
   lfo_.reset();
   feedbackLpLeft_.reset();
   feedbackLpRight_.reset();
@@ -734,6 +749,86 @@ void TapeDelayProcessor::reset() {
   feedbackHpRight_.reset();
 }
 
+void TapeDelayProcessor::process(AudioBufferView buffer) {
+  processWithSidechain(buffer, {nullptr, nullptr, 0});
+}
+
+void TapeDelayProcessor::processWithSidechain(AudioBufferView buffer,
+                                               AudioBufferView sidechain) {
+  if (!buffer.left || !buffer.right || buffer.numSamples == 0 ||
+      delayLeft_.empty()) {
+    return;
+  }
+
+  const float mix = clamp(params_.mix, 0.0f, 1.0f);
+  constexpr float kMaxFeedbackForStability = 0.95f;
+  const float feedback = clamp(params_.feedback, 0.0f, kMaxFeedbackForStability);
+  const float wowAmount = clamp(params_.wowFlutter, 0.0f, 1.0f);
+  constexpr float kMaxWowDepthMs = 3.0f;
+
+  const float duckAmount = clamp(params_.duckAmount, 0.0f, 1.0f);
+  const float duckThreshold = dbToLinear(params_.duckThresholdDb);
+
+  const bool hasSidechain = sidechain.left && sidechain.right &&
+                             sidechain.numSamples == buffer.numSamples;
+
+  for (std::size_t i = 0; i < buffer.numSamples; ++i) {
+    const float inputLeft  = buffer.left[i];
+    const float inputRight = buffer.right[i];
+
+    // --- Duck envelope detector -------------------------------------------
+    // Uses sidechain peak when provided, otherwise uses the dry input level.
+    const float detL = hasSidechain ? sidechain.left[i]  : inputLeft;
+    const float detR = hasSidechain ? sidechain.right[i] : inputRight;
+    const float detPeak = std::max(std::abs(detL), std::abs(detR));
+    const float targetEnv = detPeak > duckThreshold ? 1.0f : 0.0f;
+    if (targetEnv > duckEnvelope_) {
+      duckEnvelope_ = duckAttackCoeff_  * duckEnvelope_ +
+                      (1.0f - duckAttackCoeff_)  * targetEnv;
+    } else {
+      duckEnvelope_ = duckReleaseCoeff_ * duckEnvelope_ +
+                      (1.0f - duckReleaseCoeff_) * targetEnv;
+    }
+    // wetScale: 1 when no ducking, (1-duckAmount) at full duck.
+    const float wetScale = 1.0f - duckAmount * duckEnvelope_;
+
+    // --- Delay read --------------------------------------------------------
+    const float lfoVal = lfo_.next();
+    const float modOffsetSamples =
+        wowAmount * kMaxWowDepthMs * 0.001f *
+        static_cast<float>(sampleRate_) * lfoVal;
+    const float effectiveDelay =
+        static_cast<float>(delaySamples_) + modOffsetSamples;
+
+    const float delayedLeft  = readInterpolated(delayLeft_,  effectiveDelay);
+    const float delayedRight = readInterpolated(delayRight_, effectiveDelay);
+
+    buffer.left[i]  = inputLeft  * (1.0f - mix) + delayedLeft  * mix * wetScale;
+    buffer.right[i] = inputRight * (1.0f - mix) + delayedRight * mix * wetScale;
+    // Note: the dry signal is intentionally kept at full level while only the
+    // wet (echo) signal is attenuated.  This is the desired ducking behaviour
+    // for vocals: the voice stays clear, the echoes duck into the background.
+
+    // --- Feedback path (tone shaping) -------------------------------------
+    float fbLeft  = feedbackLpLeft_.process(delayedLeft);
+    fbLeft        = feedbackHpLeft_.process(fbLeft);
+    float fbRight = feedbackLpRight_.process(delayedRight);
+    fbRight       = feedbackHpRight_.process(fbRight);
+
+    const float feedbackLeft  = inputLeft  + fbLeft  * feedback;
+    const float feedbackRight = inputRight + fbRight * feedback;
+
+    if (params_.pingPong) {
+      delayLeft_[writeIndex_]  = feedbackRight;
+      delayRight_[writeIndex_] = feedbackLeft;
+    } else {
+      delayLeft_[writeIndex_]  = feedbackLeft;
+      delayRight_[writeIndex_] = feedbackRight;
+    }
+
+    writeIndex_ = (writeIndex_ + 1) % delayLeft_.size();
+  }
+}
 void TapeDelayProcessor::updateDelaySamples() {
   if (delayLeft_.empty()) {
     delaySamples_ = 1;
@@ -775,57 +870,6 @@ float TapeDelayProcessor::readInterpolated(const std::vector<float>& buffer,
   const std::size_t idx1 = (idx0 + bufSize - 1) % bufSize;
   const float frac = delaySamplesF - std::floor(delaySamplesF);
   return buffer[idx0] * (1.0f - frac) + buffer[idx1] * frac;
-}
-
-void TapeDelayProcessor::process(AudioBufferView buffer) {
-  if (!buffer.left || !buffer.right || buffer.numSamples == 0 ||
-      delayLeft_.empty()) {
-    return;
-  }
-
-  const float mix = clamp(params_.mix, 0.0f, 1.0f);
-  constexpr float kMaxFeedbackForStability = 0.95f;
-  const float feedback = clamp(params_.feedback, 0.0f, kMaxFeedbackForStability);
-  const float wowAmount = clamp(params_.wowFlutter, 0.0f, 1.0f);
-  constexpr float kMaxWowDepthMs = 3.0f;
-
-  for (std::size_t i = 0; i < buffer.numSamples; ++i) {
-    const float inputLeft = buffer.left[i];
-    const float inputRight = buffer.right[i];
-
-    // Modulate delay time with LFO for wow/flutter effect.
-    const float lfoVal = lfo_.next();
-    const float modOffsetSamples =
-        wowAmount * kMaxWowDepthMs * 0.001f *
-        static_cast<float>(sampleRate_) * lfoVal;
-    const float effectiveDelay =
-        static_cast<float>(delaySamples_) + modOffsetSamples;
-
-    const float delayedLeft = readInterpolated(delayLeft_, effectiveDelay);
-    const float delayedRight = readInterpolated(delayRight_, effectiveDelay);
-
-    buffer.left[i] = inputLeft * (1.0f - mix) + delayedLeft * mix;
-    buffer.right[i] = inputRight * (1.0f - mix) + delayedRight * mix;
-
-    // Apply feedback filters (tone shaping in the feedback path).
-    float fbLeft = feedbackLpLeft_.process(delayedLeft);
-    fbLeft = feedbackHpLeft_.process(fbLeft);
-    float fbRight = feedbackLpRight_.process(delayedRight);
-    fbRight = feedbackHpRight_.process(fbRight);
-
-    const float feedbackLeft = inputLeft + fbLeft * feedback;
-    const float feedbackRight = inputRight + fbRight * feedback;
-
-    if (params_.pingPong) {
-      delayLeft_[writeIndex_] = feedbackRight;
-      delayRight_[writeIndex_] = feedbackLeft;
-    } else {
-      delayLeft_[writeIndex_] = feedbackLeft;
-      delayRight_[writeIndex_] = feedbackRight;
-    }
-
-    writeIndex_ = (writeIndex_ + 1) % delayLeft_.size();
-  }
 }
 
 void ConvolutionReverbProcessor::prepare(double sampleRate) {

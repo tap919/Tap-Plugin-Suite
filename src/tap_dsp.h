@@ -218,6 +218,29 @@ struct Biquad {
     return output;
   }
 
+  // Returns the magnitude response of this filter at the given frequency (dB).
+  // Uses complex frequency-response evaluation at z = e^(j*omega).
+  float magnitudeResponseDb(float frequency, double sampleRate) const {
+    if (sampleRate <= 0.0) return 0.0f;
+    const float omega = kTwoPi * frequency / static_cast<float>(sampleRate);
+    const float c  = std::cos(omega);
+    const float s  = std::sin(omega);
+    const float c2 = std::cos(2.0f * omega);
+    const float s2 = std::sin(2.0f * omega);
+
+    const float numReal = b0 + b1 * c + b2 * c2;
+    const float numImag = -b1 * s - b2 * s2;
+    const float denReal = 1.0f + a1 * c + a2 * c2;
+    const float denImag = -a1 * s - a2 * s2;
+
+    const float numMagSq = numReal * numReal + numImag * numImag;
+    const float denMagSq = denReal * denReal + denImag * denImag;
+    // A near-zero denominator indicates a resonant/unstable filter;
+    // return a large positive value rather than 0 dB (unity).
+    if (denMagSq < 1.0e-12f) return 96.0f;
+    return 10.0f * std::log10(std::max(numMagSq / denMagSq, 1.0e-12f));
+  }
+
   float b0 = 1.0f;
   float b1 = 0.0f;
   float b2 = 0.0f;

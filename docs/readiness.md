@@ -4,6 +4,17 @@ This checklist tracks practical readiness for each plugin.
 **50% readiness** = Core DSP working with real-world parameters, metering/state wired, parameter smoothing, multi-mode behaviour.
 **75% readiness** = Full signal chain, lookahead/oversampling, per-band processing, modulation, preset-ready parameters.
 
+## UI Specification
+- [x] Big-screen visual layout defined in `docs/ui_spec.md`.
+- [x] EQ: draggable band handles on live spectrum + magnitude curve (uses `computeMagnitudeDb`).
+- [x] Compressor: transfer-curve pane + scrolling gain-reduction history strip.
+- [x] Tape Delay: input/wet meter bars show ducking in action; Duck controls row clearly labelled.
+- [x] Shared glassmorphic shell: header with Track Role menu, Smart Setup button, Settings popover.
+- [x] Window size presets (Small 800×500 / Medium 1200×700 / Large 1600×900).
+- [ ] JUCE Component implementation of EQ spectrum canvas.
+- [ ] JUCE Component implementation of compressor GR arc + history strip.
+- [ ] JUCE Component implementation of delay duck meter bars.
+
 ## Relay
 - [x] Create JUCE processor/editor scaffolding with all Relay parameters.
 - [x] Implement the core signal chain stub (gain → filters → pan → output).
@@ -30,6 +41,7 @@ This checklist tracks practical readiness for each plugin.
 - [x] Band type selection: Peak, Low Shelf, High Shelf, Low Cut, High Cut.
 - [x] Correct biquad coefficient calculation for all filter types.
 - [x] Role-based preset loader (`loadRolePreset(TrackRole)`).
+- [x] Frequency-response query (`computeMagnitudeDb(float)`) and `Biquad::magnitudeResponseDb` for drawing the EQ curve in the UI.
 - [ ] Spectrum analyzer overlay (UI layer).
 - [ ] Masking detection helper (requires external FFT spectrum data).
 
@@ -61,6 +73,7 @@ This checklist tracks practical readiness for each plugin.
 - [x] Feedback-path LP/HP filtering (tone shaping).
 - [x] Linear interpolation for smooth fractional-sample delay.
 - [x] Tempo sync with DAW BPM (`Params::bpm` + `Params::beatDivision`).
+- [x] Ducking: sidechain-driven wet-signal attenuation with envelope follower (`duckAmount`, `duckThresholdDb`, `duckAttackMs`, `duckReleaseMs`; `processWithSidechain`).
 - [ ] Multi-tap delay mode.
 
 ## Convolution IR Reverb
