@@ -6,7 +6,8 @@
 
 namespace tap {
 
-constexpr float kTwoPi = 6.28318530717958647692f;
+constexpr float kPi = 3.141593f;
+constexpr float kTwoPi = 2.0f * kPi;
 
 struct AudioBufferView {
   float* left = nullptr;

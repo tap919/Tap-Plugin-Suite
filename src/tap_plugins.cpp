@@ -40,6 +40,7 @@ void RelayProcessor::process(AudioBufferView buffer) {
   const float pan = clamp(params_.pan, -1.0f, 1.0f);
   const float panLeft = 0.5f * (1.0f - pan);
   const float panRight = 0.5f * (1.0f + pan);
+  constexpr float kMidSideScale = 0.5f;
   const float width = std::max(0.0f, params_.width);
 
   for (std::size_t i = 0; i < buffer.numSamples; ++i) {
@@ -56,8 +57,8 @@ void RelayProcessor::process(AudioBufferView buffer) {
     left = lpLeft_.process(left);
     right = lpRight_.process(right);
 
-    const float mid = 0.5f * (left + right);
-    const float side = 0.5f * (left - right) * width;
+    const float mid = kMidSideScale * (left + right);
+    const float side = kMidSideScale * (left - right) * width;
     left = mid + side;
     right = mid - side;
 
