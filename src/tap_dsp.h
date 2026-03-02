@@ -6,6 +6,8 @@
 
 namespace tap {
 
+constexpr float kTwoPi = 6.28318530718f;
+
 struct AudioBufferView {
   float* left = nullptr;
   float* right = nullptr;
@@ -40,7 +42,6 @@ struct OnePoleLowpass {
       return;
     }
     const float normalized = clamp(frequency, 20.0f, 20000.0f);
-    constexpr float kTwoPi = 6.28318530718f;
     coefficient = std::exp(-kTwoPi * normalized /
                            static_cast<float>(sampleRate));
   }
@@ -78,7 +79,6 @@ struct Biquad {
         frequency, 20.0f, static_cast<float>(sampleRate * 0.45));
     const float clampedQ = std::max(0.1f, q);
     const float amplitude = std::pow(10.0f, gainDb / 40.0f);
-    constexpr float kTwoPi = 6.28318530718f;
     const float omega = kTwoPi * clampedFreq / static_cast<float>(sampleRate);
     const float sinOmega = std::sin(omega);
     const float cosOmega = std::cos(omega);

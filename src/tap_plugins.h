@@ -142,7 +142,7 @@ class Saturate3Processor {
 class TapeDelayProcessor {
  public:
   static constexpr float kMaxDelayTimeSec = 2.0f;
-  static constexpr float kMaxDelayTimeMs = 2000.0f;
+  static constexpr float kMaxDelayTimeMs = kMaxDelayTimeSec * 1000.0f;
 
   struct Params {
     float timeMs = 320.0f;

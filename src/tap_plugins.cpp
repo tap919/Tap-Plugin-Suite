@@ -373,9 +373,10 @@ void ConvolutionReverbProcessor::resizeHistory() {
   if (sampleRate_ <= 0.0) {
     return;
   }
+  const double preDelayMs =
+      std::max(0.0, static_cast<double>(params_.preDelayMs));
   preDelaySamples_ =
-      static_cast<std::size_t>(std::max(0.0f, params_.preDelayMs) * 0.001f *
-                               static_cast<float>(sampleRate_));
+      static_cast<std::size_t>(preDelayMs * 0.001 * sampleRate_);
   const std::size_t historySize =
       std::max<std::size_t>(impulse_.size() + preDelaySamples_ + 1, 1);
   historyLeft_.assign(historySize, 0.0f);
