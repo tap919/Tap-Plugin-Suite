@@ -1,4 +1,4 @@
-# Plugin Readiness (50–75%)
+# Plugin Readiness (75–100%)
 
 This checklist tracks practical readiness for each plugin.
 **50% readiness** = Core DSP working with real-world parameters, metering/state wired, parameter smoothing, multi-mode behaviour.
@@ -10,8 +10,8 @@ This checklist tracks practical readiness for each plugin.
 - [x] Wire basic metering state (RMS/peak/LUFS placeholders).
 - [x] Parameter smoothing on gain and pan to prevent zipper noise.
 - [x] Mid/side width processing.
-- [ ] LUFS integrated metering.
-- [ ] Relay metadata broadcast via IPC.
+- [x] LUFS integrated metering (ITU-R BS.1770 K-weighted, via `LufsMeter`).
+- [ ] Relay metadata broadcast via IPC (JUCE InterprocessConnection layer).
 
 ## Compressor
 - [x] Define parameter layout (threshold/ratio/attack/release/knee/mix/mode).
@@ -19,9 +19,9 @@ This checklist tracks practical readiness for each plugin.
 - [x] Add gain-reduction meter placeholder in state/UI.
 - [x] Soft knee compression curve.
 - [x] Makeup gain parameter.
-- [ ] Auto-makeup gain calculation.
-- [ ] Sidechain input routing.
-- [ ] Smart setup from track role.
+- [x] Auto-makeup gain calculation (`computeAutoMakeupDb`).
+- [x] Sidechain input routing (`processWithSidechain`).
+- [x] Smart setup from track role (`applySmartSetup(TrackRole)`).
 
 ## EQ
 - [x] Define 6-band parametric parameters and per-band enable state.
@@ -29,9 +29,9 @@ This checklist tracks practical readiness for each plugin.
 - [x] Add analyzer/curve UI placeholder container.
 - [x] Band type selection: Peak, Low Shelf, High Shelf, Low Cut, High Cut.
 - [x] Correct biquad coefficient calculation for all filter types.
-- [ ] Spectrum analyzer overlay.
-- [ ] Masking detection helper.
-- [ ] Role-based preset loader.
+- [x] Role-based preset loader (`loadRolePreset(TrackRole)`).
+- [ ] Spectrum analyzer overlay (UI layer).
+- [ ] Masking detection helper (requires external FFT spectrum data).
 
 ## Limiter
 - [x] Define limiter parameters (ceiling, threshold, lookahead, release, true-peak).
@@ -40,8 +40,8 @@ This checklist tracks practical readiness for each plugin.
 - [x] Lookahead buffer with configurable delay.
 - [x] True-peak inter-sample detection (2× estimation).
 - [x] Gain reduction metering.
-- [ ] Multi-stage release envelope.
-- [ ] Streaming-safe mode presets.
+- [x] Multi-stage release envelope (two-stage fast/slow ballistics).
+- [x] Streaming-safe mode presets (`makeStreamingPreset`: Spotify, YouTube, Apple Music).
 
 ## Saturate3
 - [x] Define per-band drive/shape/mix parameters for three bands.
@@ -50,8 +50,8 @@ This checklist tracks practical readiness for each plugin.
 - [x] Linkwitz-Riley crossover band splitting (low/mid/high).
 - [x] Per-band waveshaping character: Tape (tanh), Tube (asymmetric exp), Transformer (cubic), Clean.
 - [x] Configurable crossover frequencies.
-- [ ] Oversampling for aliasing reduction.
-- [ ] Per-band solo/mute.
+- [x] 2× oversampling for aliasing reduction (linear-interpolation + averaging decimation).
+- [x] Per-band solo/mute (`Band::soloed`, `Band::muted`).
 
 ## Tape Delay
 - [x] Define delay time, feedback, wow/flutter, filters, mix.
@@ -60,7 +60,7 @@ This checklist tracks practical readiness for each plugin.
 - [x] Wow/flutter via LFO-modulated delay time.
 - [x] Feedback-path LP/HP filtering (tone shaping).
 - [x] Linear interpolation for smooth fractional-sample delay.
-- [ ] Tempo sync with DAW BPM.
+- [x] Tempo sync with DAW BPM (`Params::bpm` + `Params::beatDivision`).
 - [ ] Multi-tap delay mode.
 
 ## Convolution IR Reverb
@@ -71,5 +71,5 @@ This checklist tracks practical readiness for each plugin.
 - [x] Damping low-pass filter on wet signal.
 - [x] Pre-delay with configurable time.
 - [ ] FFT-based partitioned convolution for performance.
-- [ ] IR file loader (WAV/AIFF).
-- [ ] IR browser UI panel.
+- [ ] IR file loader (WAV/AIFF, OS/JUCE layer).
+- [ ] IR browser UI panel (UI layer).

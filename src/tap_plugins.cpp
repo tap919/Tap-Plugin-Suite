@@ -15,6 +15,7 @@ void RelayProcessor::prepare(double sampleRate) {
   smoothGainIn_.reset(dbToLinear(params_.gainInDb));
   smoothGainOut_.reset(dbToLinear(params_.gainOutDb));
   smoothPan_.reset(params_.pan);
+  lufsMeter_.prepare(sampleRate);
   updateFilters();
   reset();
 }
@@ -30,6 +31,7 @@ void RelayProcessor::reset() {
   lowpassLeft_.reset();
   lowpassRight_.reset();
   meters_.reset();
+  lufsMeter_.reset();
 }
 
 void RelayProcessor::updateFilters() {
@@ -90,6 +92,7 @@ void RelayProcessor::process(AudioBufferView buffer) {
 
   constexpr float kMeterDecay = 0.95f;
   meters_.update(buffer.left, buffer.right, buffer.numSamples, kMeterDecay);
+  lufsMeter_.process(buffer.left, buffer.right, buffer.numSamples);
 }
 
 void CompressorProcessor::prepare(double sampleRate) {
@@ -121,6 +124,11 @@ void CompressorProcessor::updateTimeConstants() {
 }
 
 void CompressorProcessor::process(AudioBufferView buffer) {
+  processWithSidechain(buffer, {nullptr, nullptr, 0});
+}
+
+void CompressorProcessor::processWithSidechain(AudioBufferView buffer,
+                                                AudioBufferView sidechain) {
   if (!buffer.left || !buffer.right || buffer.numSamples == 0) {
     return;
   }
@@ -132,10 +140,17 @@ void CompressorProcessor::process(AudioBufferView buffer) {
   const float makeupGain = dbToLinear(params_.makeupGainDb);
   constexpr float kDetectorFloorDb = -120.0f;
 
+  const bool hasSidechain = sidechain.left && sidechain.right &&
+                             sidechain.numSamples == buffer.numSamples;
+
   for (std::size_t i = 0; i < buffer.numSamples; ++i) {
     const float inputLeft = buffer.left[i];
     const float inputRight = buffer.right[i];
-    const float peak = std::max(std::abs(inputLeft), std::abs(inputRight));
+
+    // Use sidechain for detection when provided, otherwise use input.
+    const float detL = hasSidechain ? sidechain.left[i] : inputLeft;
+    const float detR = hasSidechain ? sidechain.right[i] : inputRight;
+    const float peak = std::max(std::abs(detL), std::abs(detR));
     const float detectorDb =
         peak > 1.0e-6f ? linearToDb(peak) : kDetectorFloorDb;
 
@@ -143,7 +158,7 @@ void CompressorProcessor::process(AudioBufferView buffer) {
     float gainDb = 0.0f;
     if (kneeDb > 0.0f && overDb > -kneeDb * 0.5f &&
         overDb < kneeDb * 0.5f) {
-      // Soft knee region
+      // Soft knee region.
       const float x = overDb + kneeDb * 0.5f;
       gainDb = -(x * x) / (2.0f * kneeDb) * (1.0f - 1.0f / ratio);
     } else if (overDb >= kneeDb * 0.5f) {
@@ -166,6 +181,74 @@ void CompressorProcessor::process(AudioBufferView buffer) {
 
   // Store gain reduction as a positive dB value (0 dB = no reduction).
   gainReductionDb_ = -linearToDb(gain_);
+}
+
+float CompressorProcessor::computeAutoMakeupDb(float thresholdDb,
+                                               float ratio) {
+  if (ratio <= 1.0f) {
+    return 0.0f;
+  }
+  // Classic approximation: half the expected average gain reduction.
+  return -(thresholdDb * (1.0f - 1.0f / ratio)) * 0.5f;
+}
+
+void CompressorProcessor::applySmartSetup(TrackRole role) {
+  switch (role) {
+    case TrackRole::LeadVocal:
+      params_.thresholdDb = -20.0f;
+      params_.ratio = 3.0f;
+      params_.attackMs = 7.0f;
+      params_.releaseMs = 120.0f;
+      params_.kneeDb = 6.0f;
+      break;
+    case TrackRole::AdLib:
+      params_.thresholdDb = -16.0f;
+      params_.ratio = 4.0f;
+      params_.attackMs = 5.0f;
+      params_.releaseMs = 80.0f;
+      params_.kneeDb = 4.0f;
+      break;
+    case TrackRole::Drums:
+      params_.thresholdDb = -12.0f;
+      params_.ratio = 6.0f;
+      params_.attackMs = 2.0f;
+      params_.releaseMs = 40.0f;
+      params_.kneeDb = 2.0f;
+      break;
+    case TrackRole::Bass808:
+    case TrackRole::Bass:
+      params_.thresholdDb = -20.0f;
+      params_.ratio = 4.0f;
+      params_.attackMs = 20.0f;
+      params_.releaseMs = 200.0f;
+      params_.kneeDb = 4.0f;
+      break;
+    case TrackRole::Piano:
+    case TrackRole::Guitar:
+      params_.thresholdDb = -18.0f;
+      params_.ratio = 3.5f;
+      params_.attackMs = 15.0f;
+      params_.releaseMs = 150.0f;
+      params_.kneeDb = 5.0f;
+      break;
+    case TrackRole::FXSend:
+      params_.thresholdDb = -12.0f;
+      params_.ratio = 2.0f;
+      params_.attackMs = 30.0f;
+      params_.releaseMs = 300.0f;
+      params_.kneeDb = 8.0f;
+      break;
+    default:
+      params_.thresholdDb = -18.0f;
+      params_.ratio = 4.0f;
+      params_.attackMs = 10.0f;
+      params_.releaseMs = 120.0f;
+      params_.kneeDb = 3.0f;
+      break;
+  }
+  params_.makeupGainDb =
+      computeAutoMakeupDb(params_.thresholdDb, params_.ratio);
+  updateTimeConstants();
 }
 
 float CompressorProcessor::gainReductionDb() const {
@@ -252,9 +335,68 @@ void EqProcessor::process(AudioBufferView buffer) {
   }
 }
 
+void EqProcessor::loadRolePreset(TrackRole role) {
+  // Reset all bands to unity/disabled first.
+  for (auto& band : params_.bands) {
+    band = {1000.0f, 0.0f, 0.707f, BandType::Peak, false};
+  }
+
+  switch (role) {
+    case TrackRole::LeadVocal:
+      params_.bands[0] = {80.0f, 0.0f, 0.707f, BandType::LowCut, true};
+      params_.bands[1] = {300.0f, -2.5f, 1.2f, BandType::Peak, true};
+      params_.bands[2] = {4000.0f, 2.5f, 1.5f, BandType::Peak, true};
+      params_.bands[3] = {10000.0f, 2.0f, 0.707f, BandType::HighShelf, true};
+      break;
+    case TrackRole::AdLib:
+      params_.bands[0] = {100.0f, 0.0f, 0.707f, BandType::LowCut, true};
+      params_.bands[1] = {350.0f, -2.0f, 1.2f, BandType::Peak, true};
+      params_.bands[2] = {5000.0f, 2.0f, 1.2f, BandType::Peak, true};
+      break;
+    case TrackRole::Bass808:
+    case TrackRole::Bass:
+      params_.bands[0] = {30.0f, 0.0f, 0.707f, BandType::LowCut, true};
+      params_.bands[1] = {80.0f, 2.0f, 1.0f, BandType::Peak, true};
+      params_.bands[2] = {250.0f, -3.0f, 1.2f, BandType::Peak, true};
+      params_.bands[3] = {2500.0f, 1.5f, 1.0f, BandType::Peak, true};
+      break;
+    case TrackRole::Drums:
+      params_.bands[0] = {60.0f, 0.0f, 0.707f, BandType::LowCut, true};
+      params_.bands[1] = {200.0f, -2.0f, 1.0f, BandType::Peak, true};
+      params_.bands[2] = {5000.0f, 2.5f, 1.2f, BandType::Peak, true};
+      params_.bands[3] = {12000.0f, 1.5f, 0.707f, BandType::HighShelf, true};
+      break;
+    case TrackRole::Piano:
+      params_.bands[0] = {80.0f, 0.0f, 0.707f, BandType::LowCut, true};
+      params_.bands[1] = {200.0f, -1.5f, 1.0f, BandType::Peak, true};
+      params_.bands[2] = {3000.0f, 1.5f, 1.0f, BandType::Peak, true};
+      break;
+    case TrackRole::Synth:
+      params_.bands[0] = {60.0f, 0.0f, 0.707f, BandType::LowCut, true};
+      params_.bands[1] = {500.0f, -1.5f, 1.0f, BandType::Peak, true};
+      params_.bands[2] = {8000.0f, 1.5f, 0.707f, BandType::HighShelf, true};
+      break;
+    case TrackRole::Guitar:
+      params_.bands[0] = {100.0f, 0.0f, 0.707f, BandType::LowCut, true};
+      params_.bands[1] = {300.0f, -2.0f, 1.0f, BandType::Peak, true};
+      params_.bands[2] = {2500.0f, 2.0f, 1.2f, BandType::Peak, true};
+      params_.bands[3] = {8000.0f, 1.0f, 0.707f, BandType::HighShelf, true};
+      break;
+    case TrackRole::FXSend:
+      params_.bands[0] = {200.0f, 0.0f, 0.707f, BandType::LowCut, true};
+      params_.bands[1] = {8000.0f, 0.0f, 0.707f, BandType::HighCut, true};
+      break;
+    default:
+      // Generic: leave all bands disabled.
+      break;
+  }
+  updateFilters();
+}
+
 void LimiterProcessor::prepare(double sampleRate) {
   sampleRate_ = sampleRate;
   releaseCoeff_ = timeMsToCoeff(params_.releaseMs, sampleRate_);
+  releaseCoeff2_ = timeMsToCoeff(params_.releaseMs2, sampleRate_);
   updateLookahead();
   reset();
 }
@@ -262,11 +404,13 @@ void LimiterProcessor::prepare(double sampleRate) {
 void LimiterProcessor::setParams(const Params& params) {
   params_ = params;
   releaseCoeff_ = timeMsToCoeff(params_.releaseMs, sampleRate_);
+  releaseCoeff2_ = timeMsToCoeff(params_.releaseMs2, sampleRate_);
   updateLookahead();
 }
 
 void LimiterProcessor::reset() {
   gain_ = 1.0f;
+  gain2_ = 1.0f;
   gainReductionDb_ = 0.0f;
   std::fill(lookaheadLeft_.begin(), lookaheadLeft_.end(), 0.0f);
   std::fill(lookaheadRight_.begin(), lookaheadRight_.end(), 0.0f);
@@ -337,18 +481,58 @@ void LimiterProcessor::process(AudioBufferView buffer) {
       gain_ = releaseCoeff_ * gain_ + (1.0f - releaseCoeff_) * targetGain;
     }
 
+    // Two-stage release: slow stage follows fast stage, preventing
+    // overshoot during recovery from dense transients.
+    if (gain_ < gain2_) {
+      gain2_ = gain_;
+    } else {
+      gain2_ = releaseCoeff2_ * gain2_ + (1.0f - releaseCoeff2_) * gain_;
+    }
+    const float outputGain = std::min(gain_, gain2_);
+
     // Read delayed sample from lookahead buffer.
     const std::size_t readIdx =
         (lookaheadWriteIndex_ + bufSize - lookaheadSamples_ + 1) % bufSize;
     buffer.left[i] =
-        clamp(lookaheadLeft_[readIdx] * gain_, -ceiling, ceiling);
+        clamp(lookaheadLeft_[readIdx] * outputGain, -ceiling, ceiling);
     buffer.right[i] =
-        clamp(lookaheadRight_[readIdx] * gain_, -ceiling, ceiling);
+        clamp(lookaheadRight_[readIdx] * outputGain, -ceiling, ceiling);
 
     lookaheadWriteIndex_ = (lookaheadWriteIndex_ + 1) % bufSize;
   }
 
-  gainReductionDb_ = -linearToDb(gain_);
+  gainReductionDb_ = -linearToDb(std::min(gain_, gain2_));
+}
+
+LimiterProcessor::Params LimiterProcessor::makeStreamingPreset(
+    StreamingPreset preset) {
+  Params p;
+  switch (preset) {
+    case StreamingPreset::Spotify:
+      p.thresholdDb = -2.0f;
+      p.ceilingDb = -1.0f;
+      p.releaseMs = 100.0f;
+      p.releaseMs2 = 500.0f;
+      p.truePeak = true;
+      break;
+    case StreamingPreset::YouTube:
+      p.thresholdDb = -2.5f;
+      p.ceilingDb = -1.0f;
+      p.releaseMs = 80.0f;
+      p.releaseMs2 = 400.0f;
+      p.truePeak = true;
+      break;
+    case StreamingPreset::AppleMusic:
+      p.thresholdDb = -3.0f;
+      p.ceilingDb = -1.0f;
+      p.releaseMs = 120.0f;
+      p.releaseMs2 = 600.0f;
+      p.truePeak = true;
+      break;
+    default:
+      break;
+  }
+  return p;
 }
 
 void Saturate3Processor::prepare(double sampleRate) {
@@ -367,6 +551,12 @@ void Saturate3Processor::reset() {
   crossoverLowRight_.reset();
   crossoverHighLeft_.reset();
   crossoverHighRight_.reset();
+  oversampLowPrevL_ = 0.0f;
+  oversampLowPrevR_ = 0.0f;
+  oversampMidPrevL_ = 0.0f;
+  oversampMidPrevR_ = 0.0f;
+  oversampHighPrevL_ = 0.0f;
+  oversampHighPrevR_ = 0.0f;
 }
 
 void Saturate3Processor::updateSaturation() {
@@ -419,6 +609,26 @@ void Saturate3Processor::process(AudioBufferView buffer) {
     }
   };
 
+  // 2× oversampling: linear-interpolate a midpoint sub-sample, process both
+  // through the non-linear shaper, then average to decimate.
+  const bool os = params_.oversample;
+  auto applyShapeOS = [&](float cur, float& prev, float drive,
+                          Character c) -> float {
+    if (!os) {
+      prev = cur;
+      return applyShape(cur * drive, c);
+    }
+    const float mid = (prev + cur) * 0.5f;
+    const float out1 = applyShape(mid * drive, c);
+    const float out2 = applyShape(cur * drive, c);
+    prev = cur;
+    return (out1 + out2) * 0.5f;
+  };
+
+  // Determine solo state once per block.
+  const bool anySoloed =
+      params_.low.soloed || params_.mid.soloed || params_.high.soloed;
+
   for (std::size_t i = 0; i < buffer.numSamples; ++i) {
     const float inputLeft = buffer.left[i];
     const float inputRight = buffer.right[i];
@@ -437,22 +647,47 @@ void Saturate3Processor::process(AudioBufferView buffer) {
 
     // Apply per-band saturation with character-specific waveshaping.
     const float satLowL =
-        applyShape(lowL * lowDrive_, params_.low.character) * params_.low.mix;
+        applyShapeOS(lowL, oversampLowPrevL_, lowDrive_,
+                     params_.low.character) *
+        params_.low.mix;
     const float satLowR =
-        applyShape(lowR * lowDrive_, params_.low.character) * params_.low.mix;
+        applyShapeOS(lowR, oversampLowPrevR_, lowDrive_,
+                     params_.low.character) *
+        params_.low.mix;
     const float satMidL =
-        applyShape(midL * midDrive_, params_.mid.character) * params_.mid.mix;
+        applyShapeOS(midL, oversampMidPrevL_, midDrive_,
+                     params_.mid.character) *
+        params_.mid.mix;
     const float satMidR =
-        applyShape(midR * midDrive_, params_.mid.character) * params_.mid.mix;
+        applyShapeOS(midR, oversampMidPrevR_, midDrive_,
+                     params_.mid.character) *
+        params_.mid.mix;
     const float satHighL =
-        applyShape(highL * highDrive_, params_.high.character) *
+        applyShapeOS(highL, oversampHighPrevL_, highDrive_,
+                     params_.high.character) *
         params_.high.mix;
     const float satHighR =
-        applyShape(highR * highDrive_, params_.high.character) *
+        applyShapeOS(highR, oversampHighPrevR_, highDrive_,
+                     params_.high.character) *
         params_.high.mix;
 
-    const float wetLeft = satLowL + satMidL + satHighL;
-    const float wetRight = satLowR + satMidR + satHighR;
+    // Accumulate bands respecting per-band mute/solo state.
+    auto bandContrib = [anySoloed](float sat, const Band& band) -> float {
+      if (band.muted) {
+        return 0.0f;
+      }
+      if (anySoloed && !band.soloed) {
+        return 0.0f;
+      }
+      return sat;
+    };
+
+    const float wetLeft = bandContrib(satLowL, params_.low) +
+                          bandContrib(satMidL, params_.mid) +
+                          bandContrib(satHighL, params_.high);
+    const float wetRight = bandContrib(satLowR, params_.low) +
+                           bandContrib(satMidR, params_.mid) +
+                           bandContrib(satHighR, params_.high);
 
     buffer.left[i] = inputLeft * dryMix_ + wetLeft * wetMix_;
     buffer.right[i] = inputRight * dryMix_ + wetRight * wetMix_;
@@ -501,7 +736,18 @@ void TapeDelayProcessor::updateDelaySamples() {
     return;
   }
 
-  const float clampedTime = clamp(params_.timeMs, 1.0f, kMaxDelayTimeMs);
+  // When tempo sync is active, derive delay time from BPM and beat division.
+  constexpr float kMsPerMinute = 60000.0f;
+  constexpr float kMinBeatDivision = 0.001f;
+  float timeMs;
+  if (params_.tempoSync && params_.bpm > 0.0f) {
+    timeMs = (kMsPerMinute / params_.bpm) *
+             std::max(kMinBeatDivision, params_.beatDivision);
+  } else {
+    timeMs = params_.timeMs;
+  }
+
+  const float clampedTime = clamp(timeMs, 1.0f, kMaxDelayTimeMs);
   const std::size_t desired =
       static_cast<std::size_t>(clampedTime * 0.001f * sampleRate_);
   const std::size_t maxDelaySamples =
