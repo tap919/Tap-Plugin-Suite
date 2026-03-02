@@ -25,6 +25,7 @@ class RelayProcessor {
   void process(AudioBufferView buffer);
 
   const MeterState& meters() const { return meters_; }
+  float lufs() const { return lufsMeter_.lufs(); }
 
  private:
   void updateFilters();
@@ -39,6 +40,7 @@ class RelayProcessor {
   SmoothParam smoothGainOut_;
   SmoothParam smoothPan_;
   MeterState meters_;
+  LufsMeter lufsMeter_;
 };
 
 class CompressorProcessor {
@@ -60,7 +62,13 @@ class CompressorProcessor {
   void setParams(const Params& params);
   void reset();
   void process(AudioBufferView buffer);
+  void processWithSidechain(AudioBufferView buffer, AudioBufferView sidechain);
   float gainReductionDb() const;
+
+  // Returns the approximate auto-makeup gain for the given threshold/ratio.
+  static float computeAutoMakeupDb(float thresholdDb, float ratio);
+  // Configures params for a typical setup based on the track role.
+  void applySmartSetup(TrackRole role);
 
  private:
   void updateTimeConstants();
@@ -94,6 +102,8 @@ class EqProcessor {
   void setParams(const Params& params);
   void reset();
   void process(AudioBufferView buffer);
+  // Apply a role-based starting EQ curve.
+  void loadRolePreset(TrackRole role);
 
  private:
   void updateFilters();
@@ -110,9 +120,14 @@ class LimiterProcessor {
     float thresholdDb = -6.0f;
     float ceilingDb = -0.1f;
     float releaseMs = 60.0f;
+    float releaseMs2 = 500.0f;  // Slow second-stage release time.
     float lookaheadMs = 1.0f;
     bool truePeak = false;
   };
+
+  enum class StreamingPreset { None, Spotify, YouTube, AppleMusic };
+  // Returns a Params preset tuned for the given streaming platform.
+  static Params makeStreamingPreset(StreamingPreset preset);
 
   void prepare(double sampleRate);
   void setParams(const Params& params);
@@ -126,7 +141,9 @@ class LimiterProcessor {
   Params params_{};
   double sampleRate_ = 0.0;
   float gain_ = 1.0f;
+  float gain2_ = 1.0f;  // Slow-stage gain for two-stage release.
   float releaseCoeff_ = 0.0f;
+  float releaseCoeff2_ = 0.0f;
   float gainReductionDb_ = 0.0f;
   std::vector<float> lookaheadLeft_;
   std::vector<float> lookaheadRight_;
@@ -142,6 +159,8 @@ class Saturate3Processor {
     float driveDb = 6.0f;
     float mix = 1.0f;
     Character character = Character::Tape;
+    bool muted = false;
+    bool soloed = false;
   };
 
   struct Params {
@@ -151,6 +170,7 @@ class Saturate3Processor {
     float lowCrossoverHz = 150.0f;
     float highCrossoverHz = 3000.0f;
     float mix = 1.0f;
+    bool oversample = false;  // Enable 2× oversampling to reduce aliasing.
   };
 
   void prepare(double sampleRate);
@@ -171,6 +191,14 @@ class Saturate3Processor {
   float lowDrive_ = 1.0f;
   float midDrive_ = 1.0f;
   float highDrive_ = 1.0f;
+  // Previous-sample state for 2× oversampling interpolation (one per band/channel).
+  bool oversampPrevReady_ = false;
+  float oversampLowPrevL_ = 0.0f;
+  float oversampLowPrevR_ = 0.0f;
+  float oversampMidPrevL_ = 0.0f;
+  float oversampMidPrevR_ = 0.0f;
+  float oversampHighPrevL_ = 0.0f;
+  float oversampHighPrevR_ = 0.0f;
   LinkwitzRileyCrossover crossoverLowLeft_;
   LinkwitzRileyCrossover crossoverLowRight_;
   LinkwitzRileyCrossover crossoverHighLeft_;
@@ -191,6 +219,8 @@ class TapeDelayProcessor {
     float highpassHz = 40.0f;
     bool pingPong = false;
     bool tempoSync = false;
+    float bpm = 120.0f;          // Host BPM used when tempoSync is true.
+    float beatDivision = 0.25f;  // Note fraction (e.g. 0.25 = 1/4 note).
   };
 
   void prepare(double sampleRate);

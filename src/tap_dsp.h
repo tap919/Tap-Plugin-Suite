@@ -331,4 +331,76 @@ struct MeterState {
   }
 };
 
+// Track role shared across plugins for smart-setup and preset loading.
+enum class TrackRole {
+  Generic,
+  LeadVocal,
+  AdLib,
+  Bass808,
+  Bass,
+  Drums,
+  Piano,
+  Synth,
+  Guitar,
+  FXSend
+};
+
+// K-weighted short-term loudness estimator.
+// Applies the ITU-R BS.1770 two-stage filter chain (high-shelf pre-filter +
+// RLB high-pass) but does NOT implement the 400 ms block gating required by
+// EBU R128 for true integrated LUFS.  Suitable for real-time metering
+// feedback; not spec-compliant for integrated-loudness measurement.
+struct LufsMeter {
+  void prepare(double sampleRate) {
+    // Stage 1: ITU-R BS.1770 K-weighting pre-filter.
+    // High shelf at 1681.97 Hz (+3.9998 dB gain), Q = 1/√2.
+    preL_.setHighShelf(1681.97f, 0.7071f, 3.9998f, sampleRate);
+    preR_.setHighShelf(1681.97f, 0.7071f, 3.9998f, sampleRate);
+    // Stage 2: ITU-R BS.1770 RLB high-pass filter.
+    // Cutoff 38.13 Hz, Q = 1/√2, removes DC / sub-bass contribution.
+    rlbL_.setHighPass(38.13f, 0.7071f, sampleRate);
+    rlbR_.setHighPass(38.13f, 0.7071f, sampleRate);
+    reset();
+  }
+
+  void reset() {
+    preL_.reset();
+    preR_.reset();
+    rlbL_.reset();
+    rlbR_.reset();
+    sumSquares_ = 0.0;
+    sampleCount_ = 0;
+    lufs_ = -70.0f;
+  }
+
+  void process(const float* left, const float* right,
+               std::size_t numSamples) {
+    if (!left || !right || numSamples == 0) {
+      return;
+    }
+    for (std::size_t i = 0; i < numSamples; ++i) {
+      const float l = rlbL_.process(preL_.process(left[i]));
+      const float r = rlbR_.process(preR_.process(right[i]));
+      sumSquares_ +=
+          static_cast<double>(l) * l + static_cast<double>(r) * r;
+    }
+    sampleCount_ += numSamples;
+    if (sampleCount_ > 0) {
+      const double mean =
+          sumSquares_ / static_cast<double>(2 * sampleCount_);
+      lufs_ = mean > 1.0e-10
+                  ? static_cast<float>(10.0 * std::log10(mean) - 0.691)
+                  : -70.0f;
+    }
+  }
+
+  float lufs() const { return lufs_; }
+
+ private:
+  Biquad preL_, preR_, rlbL_, rlbR_;
+  double sumSquares_ = 0.0;
+  std::size_t sampleCount_ = 0;
+  float lufs_ = -70.0f;
+};
+
 }  // namespace tap
