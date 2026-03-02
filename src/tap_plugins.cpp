@@ -19,15 +19,15 @@ void RelayProcessor::setParams(const Params& params) {
 void RelayProcessor::reset() {
   highpassLeft_.reset();
   highpassRight_.reset();
-  lpLeft_.reset();
-  lpRight_.reset();
+  lowpassLeft_.reset();
+  lowpassRight_.reset();
 }
 
 void RelayProcessor::updateFilters() {
   highpassLeft_.setCutoff(params_.hpFreq, sampleRate_);
   highpassRight_.setCutoff(params_.hpFreq, sampleRate_);
-  lpLeft_.setCutoff(params_.lpFreq, sampleRate_);
-  lpRight_.setCutoff(params_.lpFreq, sampleRate_);
+  lowpassLeft_.setCutoff(params_.lpFreq, sampleRate_);
+  lowpassRight_.setCutoff(params_.lpFreq, sampleRate_);
 }
 
 void RelayProcessor::process(AudioBufferView buffer) {
@@ -54,8 +54,8 @@ void RelayProcessor::process(AudioBufferView buffer) {
 
     left = highpassLeft_.process(left);
     right = highpassRight_.process(right);
-    left = lpLeft_.process(left);
-    right = lpRight_.process(right);
+    left = lowpassLeft_.process(left);
+    right = lowpassRight_.process(right);
 
     const float mid = kMidSideScale * (left + right);
     const float side = kMidSideScale * (left - right) * width;
@@ -249,8 +249,6 @@ void Saturate3Processor::setParams(const Params& params) {
 void Saturate3Processor::reset() {}
 
 void Saturate3Processor::updateSaturation() {
-  wetMix_ = clamp(params_.mix, 0.0f, 1.0f);
-  dryMix_ = 1.0f - wetMix_;
   lowDrive_ = dbToLinear(params_.low.driveDb);
   midDrive_ = dbToLinear(params_.mid.driveDb);
   highDrive_ = dbToLinear(params_.high.driveDb);
@@ -259,7 +257,10 @@ void Saturate3Processor::updateSaturation() {
     totalMixWeight_ = 1.0f;
     wetMix_ = 0.0f;
     dryMix_ = 1.0f;
+    return;
   }
+  wetMix_ = clamp(params_.mix, 0.0f, 1.0f);
+  dryMix_ = 1.0f - wetMix_;
 }
 
 void Saturate3Processor::process(AudioBufferView buffer) {
@@ -336,8 +337,8 @@ void TapeDelayProcessor::process(AudioBufferView buffer) {
   }
 
   const float mix = clamp(params_.mix, 0.0f, 1.0f);
-  constexpr float kMaxFeedback = 0.95f;
-  const float feedback = clamp(params_.feedback, 0.0f, kMaxFeedback);
+  constexpr float kMaxFeedbackForStability = 0.95f;
+  const float feedback = clamp(params_.feedback, 0.0f, kMaxFeedbackForStability);
 
   for (std::size_t i = 0; i < buffer.numSamples; ++i) {
     const float inputLeft = buffer.left[i];

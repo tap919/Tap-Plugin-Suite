@@ -31,8 +31,8 @@ class RelayProcessor {
   double sampleRate_ = 0.0;
   OnePoleHighpass highpassLeft_;
   OnePoleHighpass highpassRight_;
-  OnePoleLowpass lpLeft_;
-  OnePoleLowpass lpRight_;
+  OnePoleLowpass lowpassLeft_;
+  OnePoleLowpass lowpassRight_;
 };
 
 class CompressorProcessor {
