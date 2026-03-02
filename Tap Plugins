@@ -1,0 +1,590 @@
+give me a deep json of the entire suite with good detail scaffold for each tool
+
+Here’s a **deep JSON spec** for your entire Windows‑only VST3 plugin suite, with a detailed scaffold for each of the seven tools (Relay, Compressor, EQ, Limiter, 3‑Band Saturation, Tape Delay, Convolution IR Reverb).  
+You can wire this directly into your JUCE `AudioProcessor` / `ValueTreeState` / UI codebase.
+
+***
+
+### Full Suite JSON Spec
+
+```json
+{
+  "suite": {
+    "name": "GlassMorphic Suite",
+    "version": "1.0.0",
+    "target_daw": "VST3 on Windows",
+    "communication_layer": {
+      "type": "JUCE InterprocessConnection + MemoryMappedFile",
+      "hub_role": "First loaded Relay instance becomes the session hub",
+      "metadata_fields": [
+        "trackId",
+        "trackName",
+        "trackRole",
+        "trackGroup",
+        "busId",
+        "pan",
+        "level_linear",
+        "level_db",
+        "lufs",
+        "is_muted",
+        "is_solo"
+      ]
+    },
+    "plugins": [
+      {
+        "id": "relay",
+        "name": "Relay",
+        "type": "utility_gain_stereo",
+        "description": "Track‑aware utility providing gain, pan, filters, and Relay‑style metadata for the whole suite.",
+        "ui_style": {
+          "theme": "glassmorphic_dark",
+          "glass_level": 0.15,
+          "padding": 8,
+          "border_radius": 8
+        },
+        "parameters": [
+          {
+            "id": "gain_in",
+            "name": "Input Gain",
+            "type": "float",
+            "min": -24.0,
+            "max": 24.0,
+            "default": 0.0,
+            "unit": "dB",
+            "step": 0.1,
+            "automation": true
+          },
+          {
+            "id": "gain_out",
+            "name": "Output Gain",
+            "type": "float",
+            "min": -24.0,
+            "max": 24.0,
+            "default": 0.0,
+            "unit": "dB",
+            "step": 0.1,
+            "automation": true
+          },
+          {
+            "id": "pan",
+            "name": "Pan",
+            "type": "float",
+            "min": -1.0,
+            "max": 1.0,
+            "default": 0.0,
+            "step": 0.01,
+            "automation": true
+          },
+          {
+            "id": "width",
+            "name": "Width",
+            "type": "float",
+            "min": 0.0,
+            "max": 2.0,
+            "default": 1.0,
+            "step": 0.01,
+            "automation": true
+          },
+          {
+            "id": "phase",
+            "name": "Phase",
+            "type": "bool",
+            "default": false,
+            "automation": true
+          },
+          {
+            "id": "hp_freq",
+            "name": "HP Freq",
+            "type": "float",
+            "min": 20.0,
+            "max": 20000.0,
+            "default": 20.0,
+            "unit": "Hz",
+            "automation": true
+          },
+          {
+            "id": "lp_freq",
+            "name": "LP Freq",
+            "type": "float",
+            "min": 20.0,
+            "max": 20000.0,
+            "default": 20000.0,
+            "unit": "Hz",
+            "automation": true
+          },
+          {
+            "id": "track_role",
+            "name": "Track Role",
+            "type": "enum",
+            "default": "Generic",
+            "options": [
+              "Generic",
+              "LeadVocal",
+              "AdLib",
+              "808",
+              "Bass",
+              "Drums",
+              "Piano",
+              "Synth",
+              "Guitar",
+              "FXSend"
+            ],
+            "automation": false
+          },
+          {
+            "id": "track_group",
+            "name": "Track Group",
+            "type": "enum",
+            "default": "Main",
+            "options": [
+              "Main",
+              "DrumBus",
+              "VocalBus",
+              "Submix",
+              "FXSend",
+              "Master"
+            ],
+            "automation": false
+          }
+        ],
+        "device_state": {
+          "meters": {
+            "rms_left": 0.0,
+            "rms_right": 0.0,
+            "peak_left": 0.0,
+            "peak_right": 0.0,
+            "lufs": -70.0
+          },
+          "bus_id": 0,
+          "instance_id": 0,
+          "session_id": 0
+        },
+        "features": [
+          "input_gain",
+          "output_gain",
+          "pan",
+          "width",
+          "phase",
+          "highpass",
+          "lowpass",
+          "realtime_metering",
+          "relay_broadcast"
+        ],
+        "routing": {
+          "bypassable": true,
+          "audio_path": "in→gain→filters→pan→out",
+          "midi": false
+        }
+      },
+      {
+        "id": "compressor",
+        "name": "Compressor",
+        "type": "dynamics_stereo",
+        "description": "VCA, Opto, and Vari‑Mu style compressor with smart setup and Relay‑aware context.",
+        "ui_style": {
+          "theme": "glassmorphic_dark",
+          "glass_level": 0.15,
+          "layout": "vertical",
+          "panels": ["basic", "advanced", "smart"]
+        },
+        "parameters": [
+          {
+            "id": "mode",
+            "name": "Mode",
+            "type": "enum",
+            "default": "VCA",
+            "options": ["VCA", "Opto", "VariMu"],
+            "automation": false
+          },
+          {
+            "id": "threshold",
+            "name": "Threshold",
+            "type": "float",
+            "min": -60.0,
+            "max": 0.0,
+            "default": -18.0,
+            "unit": "dB",
+            "step": 0.1,
+            "automation": true
+          },
+          {
+            "id": "ratio",
+            "name": "Ratio",
+            "type": "float",
+            "min": 1.0,
+            "max": 20.0,
+            "default": 4.0,
+            "step": 0.1,
+            "automation": true
+          },
+          {
+            "id": "attack",
+            "name": "Attack",
+            "type": "float",
+            "min": 0.01,
+            "max": 100.0,
+            "default": 10.0,
+            "unit": "ms",
+            "step": 0.1,
+            "automation": true
+          },
+          {
+            "id": "release",
+            "name": "Release",
+            "type": "float",
+            "min": 10.0,
+            "max": 1000.0,
+            "default": 100.0,
+            "unit": "ms",
+            "step": 0.1,
+            "automation": true
+          },
+          {
+            "id": "knee",
+            "name": "Knee",
+            "type": "float",
+            "min": 0.0,
+            "max": 1.0,
+            "default": 0.5,
+            "step": 0.01,
+            "automation": true
+          },
+          {
+            "id": "makeup_gain",
+            "name": "Makeup Gain",
+            "type": "float",
+            "min": -24.0,
+            "max": 24.0,
+            "default": 0.0,
+            "unit": "dB",
+            "step": 0.1,
+            "automation": true
+          },
+          {
+            "id": "mix",
+            "name": "Dry/Wet",
+            "type": "float",
+            "min": 0.0,
+            "max": 1.0,
+            "default": 1.0,
+            "step": 0.01,
+            "automation": true
+          },
+          {
+            "id": "sidechain_source",
+            "name": "Sidechain Source",
+            "type": "enum",
+            "default": "Internal",
+            "options": ["Internal", "KeyIn", "Track_Dry", "Track_Kick", "Track_Vocal"],
+            "automation": false
+          },
+          {
+            "id": "smart_setup",
+            "name": "Smart Setup",
+            "type": "trigger",
+            "mode": "once",
+            "description": "Reads track role and proposes curve",
+            "automation": false
+          }
+        ],
+        "features": [
+          "multi_mode_vca_opto_varimu",
+          "sidechainable",
+          "smart_setup",
+          "gain_reduction_meter",
+          "input_output_meter"
+        ],
+        "routing": {
+          "bypassable": true,
+          "audio_path": "in→sidechain→detector→gain_reduction→makeup→mix→out",
+          "midi": false,
+          "sidechain": true
+        }
+      },
+      {
+        "id": "eq",
+        "name": "EQ",
+        "type": "filter_stereo",
+        "description": "Parametric EQ with smart, Relay‑aware masking helper and role‑based presets.",
+        "ui_style": {
+          "theme": "glassmorphic_dark",
+          "spectrum": true,
+          "band_editor": true
+        },
+        "parameters": [
+          {
+            "id": "low_shelf",
+            "type": "biquad",
+            "order": 2,
+            "mode": "low_shelf",
+            "default": {
+              "freq": 100.0,
+              "gain_db": 0.0,
+              "q": 0.707
+            }
+          },
+          {
+            "id": "mid_band_1",
+            "type": "biquad",
+            "order": 2,
+            "mode": "peak",
+            "default": {
+              "freq": 500.0,
+              "gain_db": 0.0,
+              "q": 1.0
+            }
+          },
+          {
+            "id": "mid_band_2",
+            "type": "biquad",
+            "order": 2,
+            "mode": "peak",
+            "default": {
+              "freq": 1500.0,
+              "gain_db": 0.0,
+              "q": 1.0
+            }
+          },
+          {
+            "id": "mid_band_3",
+            "type": "biquad",
+            "order": 2,
+            "mode": "peak",
+            "default": {
+              "freq": 4000.0,
+              "gain_db": 0.0,
+              "q": 1.0
+            }
+          },
+          {
+            "id": "high_shelf",
+            "type": "biquad",
+            "order": 2,
+            "mode": "high_shelf",
+            "default": {
+              "freq": 6000.0,
+              "gain_db": 0.0,
+              "q": 0.707
+            }
+          },
+          {
+            "id": "track_role_preset",
+            "name": "Role Preset",
+            "type": "enum",
+            "default": "Manual",
+            "options": [
+              "Manual",
+              "LeadVocal_Tight",
+              "LeadVocal_Bright",
+              "808_Scoop",
+              "DrumBus_Glue",
+              "Master_Balanced",
+              "FXSend_Open"
+            ],
+            "automation": false
+          },
+          {
+            "id": "masking_helper",
+            "name": "Masking Track",
+            "type": "enum",
+            "default": "None",
+            "options": ["None", "Kick", "Snare", "Piano", "Synth"],
+            "automation": false
+          },
+          {
+            "id": "masking_strength",
+            "name": "Masking Strength",
+            "type": "float",
+            "min": 0.0,
+            "max": 1.0,
+            "default": 0.5,
+            "step": 0.01,
+            "automation": false
+          }
+        ],
+        "features": [
+          "parametric_bands",
+          "role_preset_loader",
+          "masking_spectrum_overlay",
+          "per_band_solo"
+        ],
+        "routing": {
+          "bypassable": true,
+          "audio_path": "in→per_band_filter_chain→out",
+          "midi": false
+        }
+      },
+      {
+        "id": "limiter",
+        "name": "Limiter",
+        "type": "dynamics_stereo",
+        "description": "True‑peak limiter that reads the track before setting its curve, with smart setup and streaming‑safe presets.",
+        "ui_style": {
+          "theme": "glassmorphic_dark",
+          "lookahead": true,
+          "lufs_meter": true
+        },
+        "parameters": [
+          {
+            "id": "ceiling",
+            "name": "Ceiling",
+            "type": "float",
+            "min": -14.0,
+            "max": 0.0,
+            "default": -1.0,
+            "unit": "dBFS",
+            "step": 0.1,
+            "automation": true
+          },
+          {
+            "id": "gain",
+            "name": "Output Gain",
+            "type": "float",
+            "min": -24.0,
+            "max": 24.0,
+            "default": 0.0,
+            "unit": "dB",
+            "step": 0.1,
+            "automation": true
+          },
+          {
+            "id": "release",
+            "name": "Release",
+            "type": "float",
+            "min": 10.0,
+            "max": 500.0,
+            "default": 100.0,
+            "unit": "ms",
+            "step": 0.1,
+            "automation": true
+          },
+          {
+            "id": "true_peak_margin",
+            "name": "TP Margin",
+            "type": "float",
+            "min": 0.0,
+            "max": 6.0,
+            "default": 2.0,
+            "unit": "dB",
+            "step": 0.1,
+            "automation": true
+          },
+          {
+            "id": "mode",
+            "name": "Mode",
+            "type": "enum",
+            "default": "Transparent",
+            "options": ["Transparent", "Punchy", "Smooth"]
+          },
+          {
+            "id": "streaming_safe",
+            "name": "Streaming Safe",
+            "type": "bool",
+            "default": false,
+            "automation": false
+          },
+          {
+            "id": "learn_from_track",
+            "name": "Learn From Track",
+            "type": "trigger",
+            "mode": "once",
+            "description": "Analyzes track and auto‑tunes limiter curve",
+            "automation": false
+          }
+        ],
+        "features": [
+          "lookahead",
+          "true_peak",
+          "streaming_safe_mode",
+          "dynamic_lufs_analysis",
+          "preset_manager"
+        ],
+        "routing": {
+          "bypassable": true,
+          "audio_path": "in→lookahead_buffer→detection→limiter→gain→out",
+          "midi": false
+        }
+      },
+      {
+        "id": "saturation_3band",
+        "name": "Saturate3",
+        "type": "distortion_stereo",
+        "description": "3‑band saturator with band‑independent drive, character, and blend, driven by track role.",
+        "ui_style": {
+          "theme": "glassmorphic_dark",
+          "band_strip_layout": true
+        },
+        "parameters": [
+          {
+            "id": "low_freq",
+            "name": "Low Crossover",
+            "type": "float",
+            "min": 50.0,
+            "max": 500.0,
+            "default": 150.0,
+            "unit": "Hz",
+            "step": 1.0,
+            "automation": true
+          },
+          {
+            "id": "mid_freq",
+            "name": "Mid Crossover",
+            "type": "float",
+            "min": 500.0,
+            "max": 4000.0,
+            "default": 1000.0,
+            "unit": "Hz",
+            "step": 1.0,
+            "automation": true
+          },
+          {
+            "id": "low_drive",
+            "name": "Low Drive",
+            "type": "float",
+            "min": 0.0,
+            "max": 1.0,
+            "default": 0.0,
+            "step": 0.01,
+            "automation": true
+          },
+          {
+            "id": "low_blend",
+            "name": "Low Blend",
+            "type": "float",
+            "min": 0.0,
+            "max": 1.0,
+            "default": 1.0,
+            "step": 0.01,
+            "automation": true
+          },
+          {
+            "id": "low_character",
+            "name": "Low Character",
+            "type": "enum",
+            "default": "Tape",
+            "options": ["Tape", "Transformer", "Tube", "Clean"]
+          },
+          {
+            "id": "mid_drive",
+            "name": "Mid Drive",
+            "type": "float",
+            "min": 0.0,
+            "max": 1.0,
+            "default": 0.0,
+            "step": 0.01,
+            "automation": true
+          },
+          {
+            "id": "mid_blend",
+            "name": "Mid Blend",
+            "type": "float",
+            "min": 0.0,
+            "max": 1.0,
+            "default": 1.0,
+            "step": 0.01,
+            "automation": true
+          },
+          {
+            "id": "mid_character",
+            "name": "Mid
+
