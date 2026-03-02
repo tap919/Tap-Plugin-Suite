@@ -24,6 +24,8 @@ class RelayProcessor {
   void reset();
   void process(AudioBufferView buffer);
 
+  const MeterState& meters() const { return meters_; }
+
  private:
   void updateFilters();
 
@@ -33,6 +35,10 @@ class RelayProcessor {
   OnePoleHighpass highpassRight_;
   OnePoleLowpass lowpassLeft_;
   OnePoleLowpass lowpassRight_;
+  SmoothParam smoothGainIn_;
+  SmoothParam smoothGainOut_;
+  SmoothParam smoothPan_;
+  MeterState meters_;
 };
 
 class CompressorProcessor {
@@ -44,6 +50,8 @@ class CompressorProcessor {
     float ratio = 4.0f;
     float attackMs = 10.0f;
     float releaseMs = 120.0f;
+    float kneeDb = 0.0f;
+    float makeupGainDb = 0.0f;
     float mix = 1.0f;
     Mode mode = Mode::Vca;
   };
@@ -68,10 +76,13 @@ class CompressorProcessor {
 
 class EqProcessor {
  public:
+  enum class BandType { Peak, LowShelf, HighShelf, LowCut, HighCut };
+
   struct Band {
     float frequency = 1000.0f;
     float gainDb = 0.0f;
     float q = 0.7f;
+    BandType type = BandType::Peak;
     bool enabled = false;
   };
 
@@ -107,25 +118,38 @@ class LimiterProcessor {
   void setParams(const Params& params);
   void reset();
   void process(AudioBufferView buffer);
+  float gainReductionDb() const { return gainReductionDb_; }
 
  private:
+  void updateLookahead();
+
   Params params_{};
   double sampleRate_ = 0.0;
   float gain_ = 1.0f;
   float releaseCoeff_ = 0.0f;
+  float gainReductionDb_ = 0.0f;
+  std::vector<float> lookaheadLeft_;
+  std::vector<float> lookaheadRight_;
+  std::size_t lookaheadWriteIndex_ = 0;
+  std::size_t lookaheadSamples_ = 0;
 };
 
 class Saturate3Processor {
  public:
+  enum class Character { Tape, Tube, Transformer, Clean };
+
   struct Band {
     float driveDb = 6.0f;
     float mix = 1.0f;
+    Character character = Character::Tape;
   };
 
   struct Params {
     Band low{};
     Band mid{};
     Band high{};
+    float lowCrossoverHz = 150.0f;
+    float highCrossoverHz = 3000.0f;
     float mix = 1.0f;
   };
 
@@ -136,6 +160,9 @@ class Saturate3Processor {
 
  private:
   void updateSaturation();
+  static float shapeTape(float x);
+  static float shapeTube(float x);
+  static float shapeTransformer(float x);
 
   Params params_{};
   double sampleRate_ = 0.0;
@@ -144,7 +171,10 @@ class Saturate3Processor {
   float lowDrive_ = 1.0f;
   float midDrive_ = 1.0f;
   float highDrive_ = 1.0f;
-  float totalMixWeight_ = 1.0f;
+  LinkwitzRileyCrossover crossoverLowLeft_;
+  LinkwitzRileyCrossover crossoverLowRight_;
+  LinkwitzRileyCrossover crossoverHighLeft_;
+  LinkwitzRileyCrossover crossoverHighRight_;
 };
 
 class TapeDelayProcessor {
@@ -170,6 +200,8 @@ class TapeDelayProcessor {
 
  private:
   void updateDelaySamples();
+  float readInterpolated(const std::vector<float>& buffer,
+                         float delaySamples) const;
 
   Params params_{};
   double sampleRate_ = 0.0;
@@ -177,6 +209,11 @@ class TapeDelayProcessor {
   std::vector<float> delayRight_;
   std::size_t writeIndex_ = 0;
   std::size_t delaySamples_ = 1;
+  SimpleLFO lfo_;
+  OnePoleLowpass feedbackLpLeft_;
+  OnePoleLowpass feedbackLpRight_;
+  OnePoleHighpass feedbackHpLeft_;
+  OnePoleHighpass feedbackHpRight_;
 };
 
 class ConvolutionReverbProcessor {
@@ -196,14 +233,18 @@ class ConvolutionReverbProcessor {
 
  private:
   void resizeHistory();
+  void applyDecayToImpulse();
 
   Params params_{};
   double sampleRate_ = 0.0;
-  std::vector<float> impulse_{1.0f, 0.4f, 0.2f};
+  std::vector<float> impulseRaw_{1.0f, 0.4f, 0.2f};
+  std::vector<float> impulse_;
   std::vector<float> historyLeft_;
   std::vector<float> historyRight_;
   std::size_t writeIndex_ = 0;
   std::size_t preDelaySamples_ = 0;
+  OnePoleLowpass dampingLeft_;
+  OnePoleLowpass dampingRight_;
 };
 
 }  // namespace tap
