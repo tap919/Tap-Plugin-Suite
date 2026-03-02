@@ -29,8 +29,8 @@ class RelayProcessor {
 
   Params params_{};
   double sampleRate_ = 0.0;
-  OnePoleLowpass highpassLeft_;
-  OnePoleLowpass highpassRight_;
+  OnePoleHighpass highpassLeft_;
+  OnePoleHighpass highpassRight_;
   OnePoleLowpass lpLeft_;
   OnePoleLowpass lpRight_;
 };

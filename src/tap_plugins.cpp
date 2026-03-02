@@ -51,8 +51,8 @@ void RelayProcessor::process(AudioBufferView buffer) {
       right = -right;
     }
 
-    left = left - highpassLeft_.process(left);
-    right = right - highpassRight_.process(right);
+    left = highpassLeft_.process(left);
+    right = highpassRight_.process(right);
     left = lpLeft_.process(left);
     right = lpRight_.process(right);
 

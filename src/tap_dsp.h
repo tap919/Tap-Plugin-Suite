@@ -55,6 +55,34 @@ struct OnePoleLowpass {
   float state = 0.0f;
 };
 
+struct OnePoleHighpass {
+  void reset(float value = 0.0f) {
+    state = 0.0f;
+    lastInput = value;
+  }
+
+  void setCutoff(float frequency, double sampleRate) {
+    if (sampleRate <= 0.0) {
+      coefficient = 0.0f;
+      return;
+    }
+    const float normalized = clamp(frequency, 20.0f, 20000.0f);
+    coefficient =
+        std::exp(-kTwoPi * normalized / static_cast<float>(sampleRate));
+  }
+
+  float process(float input) {
+    const float output = coefficient * (state + input - lastInput);
+    state = output;
+    lastInput = input;
+    return output;
+  }
+
+  float coefficient = 0.0f;
+  float state = 0.0f;
+  float lastInput = 0.0f;
+};
+
 struct Biquad {
   void reset() {
     z1 = 0.0f;
