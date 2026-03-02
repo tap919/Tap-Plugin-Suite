@@ -29,8 +29,8 @@ class RelayProcessor {
 
   Params params_{};
   double sampleRate_ = 0.0;
-  OnePoleLowpass highpassLowpassLeft_;
-  OnePoleLowpass highpassLowpassRight_;
+  OnePoleLowpass highpassLeft_;
+  OnePoleLowpass highpassRight_;
   OnePoleLowpass lpLeft_;
   OnePoleLowpass lpRight_;
 };
@@ -135,8 +135,16 @@ class Saturate3Processor {
   void process(AudioBufferView buffer);
 
  private:
+  void updateSaturation();
+
   Params params_{};
   double sampleRate_ = 0.0;
+  float wetMix_ = 1.0f;
+  float dryMix_ = 0.0f;
+  float lowDrive_ = 1.0f;
+  float midDrive_ = 1.0f;
+  float highDrive_ = 1.0f;
+  float totalMixWeight_ = 1.0f;
 };
 
 class TapeDelayProcessor {

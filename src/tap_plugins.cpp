@@ -17,15 +17,15 @@ void RelayProcessor::setParams(const Params& params) {
 }
 
 void RelayProcessor::reset() {
-  highpassLowpassLeft_.reset();
-  highpassLowpassRight_.reset();
+  highpassLeft_.reset();
+  highpassRight_.reset();
   lpLeft_.reset();
   lpRight_.reset();
 }
 
 void RelayProcessor::updateFilters() {
-  highpassLowpassLeft_.setCutoff(params_.hpFreq, sampleRate_);
-  highpassLowpassRight_.setCutoff(params_.hpFreq, sampleRate_);
+  highpassLeft_.setCutoff(params_.hpFreq, sampleRate_);
+  highpassRight_.setCutoff(params_.hpFreq, sampleRate_);
   lpLeft_.setCutoff(params_.lpFreq, sampleRate_);
   lpRight_.setCutoff(params_.lpFreq, sampleRate_);
 }
@@ -51,8 +51,8 @@ void RelayProcessor::process(AudioBufferView buffer) {
       right = -right;
     }
 
-    left = left - highpassLowpassLeft_.process(left);
-    right = right - highpassLowpassRight_.process(right);
+    left = left - highpassLeft_.process(left);
+    right = right - highpassRight_.process(right);
     left = lpLeft_.process(left);
     right = lpRight_.process(right);
 
@@ -232,27 +232,37 @@ void LimiterProcessor::process(AudioBufferView buffer) {
 
 void Saturate3Processor::prepare(double sampleRate) {
   sampleRate_ = sampleRate;
+  updateSaturation();
 }
 
 void Saturate3Processor::setParams(const Params& params) {
   params_ = params;
+  updateSaturation();
 }
 
 void Saturate3Processor::reset() {}
+
+void Saturate3Processor::updateSaturation() {
+  wetMix_ = clamp(params_.mix, 0.0f, 1.0f);
+  dryMix_ = 1.0f - wetMix_;
+  lowDrive_ = dbToLinear(params_.low.driveDb);
+  midDrive_ = dbToLinear(params_.mid.driveDb);
+  highDrive_ = dbToLinear(params_.high.driveDb);
+  totalMixWeight_ = params_.low.mix + params_.mid.mix + params_.high.mix;
+  if (totalMixWeight_ <= 0.0f) {
+    totalMixWeight_ = 1.0f;
+  }
+}
 
 void Saturate3Processor::process(AudioBufferView buffer) {
   if (!buffer.left || !buffer.right || buffer.numSamples == 0) {
     return;
   }
 
-  const float mix = clamp(params_.mix, 0.0f, 1.0f);
-  const float lowDrive = dbToLinear(params_.low.driveDb);
-  const float midDrive = dbToLinear(params_.mid.driveDb);
-  const float highDrive = dbToLinear(params_.high.driveDb);
-  float totalMixWeight = params_.low.mix + params_.mid.mix + params_.high.mix;
-  if (totalMixWeight <= 0.0f) {
-    totalMixWeight = 1.0f;
-  }
+  const float lowDrive = lowDrive_;
+  const float midDrive = midDrive_;
+  const float highDrive = highDrive_;
+  const float totalMixWeight = totalMixWeight_;
 
   for (std::size_t i = 0; i < buffer.numSamples; ++i) {
     const float inputLeft = buffer.left[i];
@@ -270,8 +280,8 @@ void Saturate3Processor::process(AudioBufferView buffer) {
          std::tanh(inputRight * highDrive) * params_.high.mix) /
         totalMixWeight;
 
-    buffer.left[i] = inputLeft * (1.0f - mix) + satLeft * mix;
-    buffer.right[i] = inputRight * (1.0f - mix) + satRight * mix;
+    buffer.left[i] = inputLeft * dryMix_ + satLeft * wetMix_;
+    buffer.right[i] = inputRight * dryMix_ + satRight * wetMix_;
   }
 }
 
