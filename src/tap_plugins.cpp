@@ -108,7 +108,7 @@ void CompressorProcessor::process(AudioBufferView buffer) {
     const float inputRight = buffer.right[i];
     const float peak = std::max(std::abs(inputLeft), std::abs(inputRight));
     const float detectorDb =
-        peak > 1.0e-6f ? linearToDb(peak) : thresholdDb;
+        peak > 1.0e-6f ? linearToDb(peak) : -120.0f;
 
     const float overDb = detectorDb - thresholdDb;
     float gainDb = 0.0f;
@@ -255,6 +255,8 @@ void Saturate3Processor::updateSaturation() {
   totalMixWeight_ = params_.low.mix + params_.mid.mix + params_.high.mix;
   if (totalMixWeight_ <= 0.0f) {
     totalMixWeight_ = 1.0f;
+    wetMix_ = 0.0f;
+    dryMix_ = 1.0f;
   }
 }
 
@@ -311,7 +313,7 @@ void TapeDelayProcessor::reset() {
 }
 
 void TapeDelayProcessor::updateDelaySamples() {
-  if (sampleRate_ <= 0.0 || delayLeft_.empty()) {
+  if (delayLeft_.empty()) {
     delaySamples_ = 1;
     return;
   }

@@ -57,7 +57,7 @@ struct OnePoleLowpass {
 
 struct OnePoleHighpass {
   void reset(float value = 0.0f) {
-    state = 0.0f;
+    state = value;
     lastInput = value;
   }
 
