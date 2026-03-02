@@ -103,13 +103,14 @@ void CompressorProcessor::process(AudioBufferView buffer) {
   const float mix = clamp(params_.mix, 0.0f, 1.0f);
   const float thresholdDb = params_.thresholdDb;
   const float ratio = std::max(1.0f, params_.ratio);
+  constexpr float kDetectorFloorDb = -120.0f;
 
   for (std::size_t i = 0; i < buffer.numSamples; ++i) {
     const float inputLeft = buffer.left[i];
     const float inputRight = buffer.right[i];
     const float peak = std::max(std::abs(inputLeft), std::abs(inputRight));
     const float detectorDb =
-        peak > 1.0e-6f ? linearToDb(peak) : -120.0f;
+        peak > 1.0e-6f ? linearToDb(peak) : kDetectorFloorDb;
 
     const float overDb = detectorDb - thresholdDb;
     float gainDb = 0.0f;
@@ -332,7 +333,8 @@ void TapeDelayProcessor::process(AudioBufferView buffer) {
   }
 
   const float mix = clamp(params_.mix, 0.0f, 1.0f);
-  const float feedback = clamp(params_.feedback, 0.0f, 0.95f);
+  constexpr float kMaxFeedback = 0.95f;
+  const float feedback = clamp(params_.feedback, 0.0f, kMaxFeedback);
 
   for (std::size_t i = 0; i < buffer.numSamples; ++i) {
     const float inputLeft = buffer.left[i];
