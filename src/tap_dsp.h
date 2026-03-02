@@ -345,7 +345,11 @@ enum class TrackRole {
   FXSend
 };
 
-// ITU-R BS.1770 K-weighted integrated loudness meter.
+// K-weighted short-term loudness estimator.
+// Applies the ITU-R BS.1770 two-stage filter chain (high-shelf pre-filter +
+// RLB high-pass) but does NOT implement the 400 ms block gating required by
+// EBU R128 for true integrated LUFS.  Suitable for real-time metering
+// feedback; not spec-compliant for integrated-loudness measurement.
 struct LufsMeter {
   void prepare(double sampleRate) {
     // Stage 1: ITU-R BS.1770 K-weighting pre-filter.

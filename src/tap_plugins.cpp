@@ -551,6 +551,7 @@ void Saturate3Processor::reset() {
   crossoverLowRight_.reset();
   crossoverHighLeft_.reset();
   crossoverHighRight_.reset();
+  oversampPrevReady_ = false;
   oversampLowPrevL_ = 0.0f;
   oversampLowPrevR_ = 0.0f;
   oversampMidPrevL_ = 0.0f;
@@ -611,12 +612,17 @@ void Saturate3Processor::process(AudioBufferView buffer) {
 
   // 2× oversampling: linear-interpolate a midpoint sub-sample, process both
   // through the non-linear shaper, then average to decimate.
+  // On the first sample after reset, prev is seeded from cur to avoid an
+  // artificial transient caused by the 0-initialised state.
   const bool os = params_.oversample;
   auto applyShapeOS = [&](float cur, float& prev, float drive,
                           Character c) -> float {
     if (!os) {
       prev = cur;
       return applyShape(cur * drive, c);
+    }
+    if (!oversampPrevReady_) {
+      prev = cur;  // Warm-up: no click on first sample after reset.
     }
     const float mid = (prev + cur) * 0.5f;
     const float out1 = applyShape(mid * drive, c);
@@ -625,9 +631,15 @@ void Saturate3Processor::process(AudioBufferView buffer) {
     return (out1 + out2) * 0.5f;
   };
 
-  // Determine solo state once per block.
+  // Precompute per-band active flags once per block (mute/solo is block-constant).
   const bool anySoloed =
       params_.low.soloed || params_.mid.soloed || params_.high.soloed;
+  const bool lowActive =
+      !params_.low.muted && (!anySoloed || params_.low.soloed);
+  const bool midActive =
+      !params_.mid.muted && (!anySoloed || params_.mid.soloed);
+  const bool highActive =
+      !params_.high.muted && (!anySoloed || params_.high.soloed);
 
   for (std::size_t i = 0; i < buffer.numSamples; ++i) {
     const float inputLeft = buffer.left[i];
@@ -671,23 +683,15 @@ void Saturate3Processor::process(AudioBufferView buffer) {
                      params_.high.character) *
         params_.high.mix;
 
-    // Accumulate bands respecting per-band mute/solo state.
-    auto bandContrib = [anySoloed](float sat, const Band& band) -> float {
-      if (band.muted) {
-        return 0.0f;
-      }
-      if (anySoloed && !band.soloed) {
-        return 0.0f;
-      }
-      return sat;
-    };
+    // Mark prev values valid after the first sample.
+    oversampPrevReady_ = true;
 
-    const float wetLeft = bandContrib(satLowL, params_.low) +
-                          bandContrib(satMidL, params_.mid) +
-                          bandContrib(satHighL, params_.high);
-    const float wetRight = bandContrib(satLowR, params_.low) +
-                           bandContrib(satMidR, params_.mid) +
-                           bandContrib(satHighR, params_.high);
+    const float wetLeft = (lowActive ? satLowL : 0.0f) +
+                          (midActive ? satMidL : 0.0f) +
+                          (highActive ? satHighL : 0.0f);
+    const float wetRight = (lowActive ? satLowR : 0.0f) +
+                           (midActive ? satMidR : 0.0f) +
+                           (highActive ? satHighR : 0.0f);
 
     buffer.left[i] = inputLeft * dryMix_ + wetLeft * wetMix_;
     buffer.right[i] = inputRight * dryMix_ + wetRight * wetMix_;

@@ -192,6 +192,7 @@ class Saturate3Processor {
   float midDrive_ = 1.0f;
   float highDrive_ = 1.0f;
   // Previous-sample state for 2× oversampling interpolation (one per band/channel).
+  bool oversampPrevReady_ = false;
   float oversampLowPrevL_ = 0.0f;
   float oversampLowPrevR_ = 0.0f;
   float oversampMidPrevL_ = 0.0f;
