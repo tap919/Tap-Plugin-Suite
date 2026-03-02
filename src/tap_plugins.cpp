@@ -35,6 +35,9 @@ void RelayProcessor::process(AudioBufferView buffer) {
   if (!buffer.left || !buffer.right || buffer.numSamples == 0) {
     return;
   }
+  if (sampleRate_ <= 0.0) {
+    return;
+  }
 
   const float gainIn = dbToLinear(params_.gainInDb);
   const float gainOut = dbToLinear(params_.gainOutDb);
