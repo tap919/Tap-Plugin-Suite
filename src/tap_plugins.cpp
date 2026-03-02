@@ -17,15 +17,15 @@ void RelayProcessor::setParams(const Params& params) {
 }
 
 void RelayProcessor::reset() {
-  hpLowpassLeft_.reset();
-  hpLowpassRight_.reset();
+  highpassLowpassLeft_.reset();
+  highpassLowpassRight_.reset();
   lpLeft_.reset();
   lpRight_.reset();
 }
 
 void RelayProcessor::updateFilters() {
-  hpLowpassLeft_.setCutoff(params_.hpFreq, sampleRate_);
-  hpLowpassRight_.setCutoff(params_.hpFreq, sampleRate_);
+  highpassLowpassLeft_.setCutoff(params_.hpFreq, sampleRate_);
+  highpassLowpassRight_.setCutoff(params_.hpFreq, sampleRate_);
   lpLeft_.setCutoff(params_.lpFreq, sampleRate_);
   lpRight_.setCutoff(params_.lpFreq, sampleRate_);
 }
@@ -51,8 +51,8 @@ void RelayProcessor::process(AudioBufferView buffer) {
       right = -right;
     }
 
-    left = left - hpLowpassLeft_.process(left);
-    right = right - hpLowpassRight_.process(right);
+    left = left - highpassLowpassLeft_.process(left);
+    right = right - highpassLowpassRight_.process(right);
     left = lpLeft_.process(left);
     right = lpRight_.process(right);
 
@@ -249,9 +249,9 @@ void Saturate3Processor::process(AudioBufferView buffer) {
   const float lowDrive = dbToLinear(params_.low.driveDb);
   const float midDrive = dbToLinear(params_.mid.driveDb);
   const float highDrive = dbToLinear(params_.high.driveDb);
-  float mixSum = params_.low.mix + params_.mid.mix + params_.high.mix;
-  if (mixSum <= 0.0f) {
-    mixSum = 1.0f;
+  float totalMixWeight = params_.low.mix + params_.mid.mix + params_.high.mix;
+  if (totalMixWeight <= 0.0f) {
+    totalMixWeight = 1.0f;
   }
 
   for (std::size_t i = 0; i < buffer.numSamples; ++i) {
@@ -262,13 +262,13 @@ void Saturate3Processor::process(AudioBufferView buffer) {
         (std::tanh(inputLeft * lowDrive) * params_.low.mix +
          std::tanh(inputLeft * midDrive) * params_.mid.mix +
          std::tanh(inputLeft * highDrive) * params_.high.mix) /
-        mixSum;
+        totalMixWeight;
 
     const float satRight =
         (std::tanh(inputRight * lowDrive) * params_.low.mix +
          std::tanh(inputRight * midDrive) * params_.mid.mix +
          std::tanh(inputRight * highDrive) * params_.high.mix) /
-        mixSum;
+        totalMixWeight;
 
     buffer.left[i] = inputLeft * (1.0f - mix) + satLeft * mix;
     buffer.right[i] = inputRight * (1.0f - mix) + satRight * mix;
