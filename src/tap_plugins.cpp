@@ -39,8 +39,15 @@ void RelayProcessor::process(AudioBufferView buffer) {
   const float gainIn = dbToLinear(params_.gainInDb);
   const float gainOut = dbToLinear(params_.gainOutDb);
   const float pan = clamp(params_.pan, -1.0f, 1.0f);
-  const float panLeft = 0.5f * (1.0f - pan);
-  const float panRight = 0.5f * (1.0f + pan);
+  float panLeft = 1.0f;
+  float panRight = 1.0f;
+  if (pan < 0.0f) {
+    // Pan left: keep left at unity, attenuate right from 1.0 to 0.0 as pan goes -0.0 -> -1.0
+    panRight = 1.0f + pan;
+  } else if (pan > 0.0f) {
+    // Pan right: keep right at unity, attenuate left from 1.0 to 0.0 as pan goes 0.0 -> 1.0
+    panLeft = 1.0f - pan;
+  }
   constexpr float kMidSideScale = 0.5f;
   const float width = std::max(0.0f, params_.width);
 
