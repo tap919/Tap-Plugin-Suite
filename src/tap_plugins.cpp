@@ -107,7 +107,8 @@ void CompressorProcessor::process(AudioBufferView buffer) {
     const float inputLeft = buffer.left[i];
     const float inputRight = buffer.right[i];
     const float peak = std::max(std::abs(inputLeft), std::abs(inputRight));
-    const float detectorDb = linearToDb(peak);
+    const float detectorDb =
+        peak > 1.0e-6f ? linearToDb(peak) : thresholdDb;
 
     const float overDb = detectorDb - thresholdDb;
     float gainDb = 0.0f;
@@ -217,7 +218,10 @@ void LimiterProcessor::process(AudioBufferView buffer) {
     const float inputLeft = buffer.left[i];
     const float inputRight = buffer.right[i];
     const float peak = std::max(std::abs(inputLeft), std::abs(inputRight));
-    const float targetGain = peak > threshold ? (threshold / peak) : 1.0f;
+    float targetGain = 1.0f;
+    if (peak > threshold && peak > 0.0f) {
+      targetGain = threshold / peak;
+    }
 
     if (targetGain < gain_) {
       gain_ = targetGain;

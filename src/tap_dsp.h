@@ -41,8 +41,8 @@ struct OnePoleLowpass {
       coefficient = 0.0f;
       return;
     }
-    const float normalized = clamp(frequency, 20.0f, 20000.0f);
-    coefficient = std::exp(-kTwoPi * normalized /
+    const float clampedFrequency = clamp(frequency, 20.0f, 20000.0f);
+    coefficient = std::exp(-kTwoPi * clampedFrequency /
                            static_cast<float>(sampleRate));
   }
 
@@ -66,9 +66,9 @@ struct OnePoleHighpass {
       coefficient = 0.0f;
       return;
     }
-    const float normalized = clamp(frequency, 20.0f, 20000.0f);
-    coefficient =
-        std::exp(-kTwoPi * normalized / static_cast<float>(sampleRate));
+    const float clampedFrequency = clamp(frequency, 20.0f, 20000.0f);
+    coefficient = std::exp(-kTwoPi * clampedFrequency /
+                           static_cast<float>(sampleRate));
   }
 
   float process(float input) {
