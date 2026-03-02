@@ -115,7 +115,7 @@ void CompressorProcessor::process(AudioBufferView buffer) {
     const float overDb = detectorDb - thresholdDb;
     float gainDb = 0.0f;
     if (overDb > 0.0f) {
-      gainDb = -(overDb - overDb / ratio);
+      gainDb = -overDb * (1.0f - 1.0f / ratio);
     }
 
     const float targetGain = dbToLinear(gainDb);
@@ -323,7 +323,10 @@ void TapeDelayProcessor::updateDelaySamples() {
   const float clampedTime = clamp(params_.timeMs, 1.0f, kMaxDelayTimeMs);
   const std::size_t desired =
       static_cast<std::size_t>(clampedTime * 0.001f * sampleRate_);
-  delaySamples_ = std::min(desired, delayLeft_.size() - 1);
+  delaySamples_ = std::min(desired, delayLeft_.size());
+  if (delaySamples_ == 0) {
+    delaySamples_ = 1;
+  }
 }
 
 void TapeDelayProcessor::process(AudioBufferView buffer) {
