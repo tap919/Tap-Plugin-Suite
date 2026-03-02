@@ -132,7 +132,8 @@ void CompressorProcessor::process(AudioBufferView buffer) {
     buffer.right[i] = wetRight * mix + inputRight * (1.0f - mix);
   }
 
-  gainReductionDb_ = linearToDb(gain_);
+  // Store gain reduction as a positive dB value (0 dB = no reduction).
+  gainReductionDb_ = -linearToDb(gain_);
 }
 
 float CompressorProcessor::gainReductionDb() const {
