@@ -278,7 +278,7 @@ void Saturate3Processor::process(AudioBufferView buffer) {
 void TapeDelayProcessor::prepare(double sampleRate) {
   sampleRate_ = sampleRate;
   const std::size_t maxSamples =
-      static_cast<std::size_t>(std::max(1.0, sampleRate_ * 2.0));
+      static_cast<std::size_t>(std::max(1.0, sampleRate_ * kMaxDelayTimeSec));
   delayLeft_.assign(maxSamples, 0.0f);
   delayRight_.assign(maxSamples, 0.0f);
   updateDelaySamples();
@@ -302,7 +302,7 @@ void TapeDelayProcessor::updateDelaySamples() {
     return;
   }
 
-  const float clampedTime = clamp(params_.timeMs, 1.0f, 2000.0f);
+  const float clampedTime = clamp(params_.timeMs, 1.0f, kMaxDelayTimeMs);
   const std::size_t desired =
       static_cast<std::size_t>(clampedTime * 0.001f * sampleRate_);
   delaySamples_ = std::min(desired, delayLeft_.size() - 1);
