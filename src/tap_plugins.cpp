@@ -324,7 +324,9 @@ void TapeDelayProcessor::updateDelaySamples() {
   const float clampedTime = clamp(params_.timeMs, 1.0f, kMaxDelayTimeMs);
   const std::size_t desired =
       static_cast<std::size_t>(clampedTime * 0.001f * sampleRate_);
-  delaySamples_ = std::min(desired, delayLeft_.size());
+  const std::size_t maxDelaySamples =
+      delayLeft_.size() > 1 ? delayLeft_.size() - 1 : static_cast<std::size_t>(1);
+  delaySamples_ = std::min(desired, maxDelaySamples);
   if (delaySamples_ == 0) {
     delaySamples_ = 1;
   }
