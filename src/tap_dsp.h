@@ -67,7 +67,8 @@ struct OnePoleHighpass {
       coefficient = 0.0f;
       return;
     }
-    const float clampedFrequency = clamp(frequency, 20.0f, 20000.0f);
+    const float maxCutoff = 0.45f * static_cast<float>(sampleRate);
+    const float clampedFrequency = clamp(frequency, 20.0f, maxCutoff);
     coefficient = std::exp(-kTwoPi * clampedFrequency /
                            static_cast<float>(sampleRate));
   }
