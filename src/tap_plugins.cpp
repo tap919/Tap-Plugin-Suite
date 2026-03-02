@@ -1,0 +1,393 @@
+#include "tap_plugins.h"
+
+#include <algorithm>
+#include <cmath>
+
+namespace tap {
+
+void RelayProcessor::prepare(double sampleRate) {
+  sampleRate_ = sampleRate;
+  updateFilters();
+  reset();
+}
+
+void RelayProcessor::setParams(const Params& params) {
+  params_ = params;
+  updateFilters();
+}
+
+void RelayProcessor::reset() {
+  hpLeft_.reset();
+  hpRight_.reset();
+  lpLeft_.reset();
+  lpRight_.reset();
+}
+
+void RelayProcessor::updateFilters() {
+  hpLeft_.setCutoff(params_.hpFreq, sampleRate_);
+  hpRight_.setCutoff(params_.hpFreq, sampleRate_);
+  lpLeft_.setCutoff(params_.lpFreq, sampleRate_);
+  lpRight_.setCutoff(params_.lpFreq, sampleRate_);
+}
+
+void RelayProcessor::process(AudioBufferView buffer) {
+  if (!buffer.left || !buffer.right || buffer.numSamples == 0) {
+    return;
+  }
+
+  const float gainIn = dbToLinear(params_.gainInDb);
+  const float gainOut = dbToLinear(params_.gainOutDb);
+  const float pan = clamp(params_.pan, -1.0f, 1.0f);
+  const float panLeft = 0.5f * (1.0f - pan);
+  const float panRight = 0.5f * (1.0f + pan);
+  const float width = std::max(0.0f, params_.width);
+
+  for (std::size_t i = 0; i < buffer.numSamples; ++i) {
+    float left = buffer.left[i] * gainIn;
+    float right = buffer.right[i] * gainIn;
+
+    if (params_.phaseInvert) {
+      left = -left;
+      right = -right;
+    }
+
+    left = left - hpLeft_.process(left);
+    right = right - hpRight_.process(right);
+    left = lpLeft_.process(left);
+    right = lpRight_.process(right);
+
+    const float mid = 0.5f * (left + right);
+    const float side = 0.5f * (left - right) * width;
+    left = mid + side;
+    right = mid - side;
+
+    buffer.left[i] = left * panLeft * gainOut;
+    buffer.right[i] = right * panRight * gainOut;
+  }
+}
+
+void CompressorProcessor::prepare(double sampleRate) {
+  sampleRate_ = sampleRate;
+  updateTimeConstants();
+  reset();
+}
+
+void CompressorProcessor::setParams(const Params& params) {
+  params_ = params;
+  updateTimeConstants();
+}
+
+void CompressorProcessor::reset() {
+  envelope_ = 0.0f;
+  gain_ = 1.0f;
+  gainReductionDb_ = 0.0f;
+}
+
+void CompressorProcessor::updateTimeConstants() {
+  float modeScale = 1.0f;
+  if (params_.mode == Mode::Opto) {
+    modeScale = 1.5f;
+  } else if (params_.mode == Mode::VariMu) {
+    modeScale = 2.0f;
+  }
+  attackCoeff_ = timeMsToCoeff(params_.attackMs * modeScale, sampleRate_);
+  releaseCoeff_ = timeMsToCoeff(params_.releaseMs * modeScale, sampleRate_);
+}
+
+void CompressorProcessor::process(AudioBufferView buffer) {
+  if (!buffer.left || !buffer.right || buffer.numSamples == 0) {
+    return;
+  }
+
+  const float mix = clamp(params_.mix, 0.0f, 1.0f);
+  const float thresholdDb = params_.thresholdDb;
+  const float ratio = std::max(1.0f, params_.ratio);
+
+  for (std::size_t i = 0; i < buffer.numSamples; ++i) {
+    const float inputLeft = buffer.left[i];
+    const float inputRight = buffer.right[i];
+    const float peak = std::max(std::abs(inputLeft), std::abs(inputRight));
+    const float detectorDb = linearToDb(peak);
+
+    const float overDb = detectorDb - thresholdDb;
+    float gainDb = 0.0f;
+    if (overDb > 0.0f) {
+      gainDb = -(overDb - overDb / ratio);
+    }
+
+    const float targetGain = dbToLinear(gainDb);
+    if (targetGain < gain_) {
+      gain_ = attackCoeff_ * gain_ + (1.0f - attackCoeff_) * targetGain;
+    } else {
+      gain_ = releaseCoeff_ * gain_ + (1.0f - releaseCoeff_) * targetGain;
+    }
+
+    const float wetLeft = inputLeft * gain_;
+    const float wetRight = inputRight * gain_;
+
+    buffer.left[i] = wetLeft * mix + inputLeft * (1.0f - mix);
+    buffer.right[i] = wetRight * mix + inputRight * (1.0f - mix);
+  }
+
+  gainReductionDb_ = linearToDb(gain_);
+}
+
+float CompressorProcessor::gainReductionDb() const {
+  return gainReductionDb_;
+}
+
+void EqProcessor::prepare(double sampleRate) {
+  sampleRate_ = sampleRate;
+}
+
+void EqProcessor::setParams(const Params& params) {
+  params_ = params;
+}
+
+void EqProcessor::reset() {}
+
+void EqProcessor::process(AudioBufferView buffer) {
+  if (!buffer.left || !buffer.right || buffer.numSamples == 0) {
+    return;
+  }
+
+  float gain = 1.0f;
+  for (const auto& band : params_.bands) {
+    if (band.enabled) {
+      gain *= dbToLinear(band.gainDb);
+    }
+  }
+
+  for (std::size_t i = 0; i < buffer.numSamples; ++i) {
+    buffer.left[i] *= gain;
+    buffer.right[i] *= gain;
+  }
+}
+
+void LimiterProcessor::prepare(double sampleRate) {
+  sampleRate_ = sampleRate;
+  releaseCoeff_ = timeMsToCoeff(params_.releaseMs, sampleRate_);
+  reset();
+}
+
+void LimiterProcessor::setParams(const Params& params) {
+  params_ = params;
+  releaseCoeff_ = timeMsToCoeff(params_.releaseMs, sampleRate_);
+}
+
+void LimiterProcessor::reset() {
+  gain_ = 1.0f;
+}
+
+void LimiterProcessor::process(AudioBufferView buffer) {
+  if (!buffer.left || !buffer.right || buffer.numSamples == 0) {
+    return;
+  }
+
+  const float threshold = dbToLinear(params_.thresholdDb);
+  const float ceiling = dbToLinear(params_.ceilingDb);
+
+  for (std::size_t i = 0; i < buffer.numSamples; ++i) {
+    const float inputLeft = buffer.left[i];
+    const float inputRight = buffer.right[i];
+    const float peak = std::max(std::abs(inputLeft), std::abs(inputRight));
+    const float targetGain = peak > threshold ? (threshold / peak) : 1.0f;
+
+    if (targetGain < gain_) {
+      gain_ = targetGain;
+    } else {
+      gain_ = releaseCoeff_ * gain_ + (1.0f - releaseCoeff_) * targetGain;
+    }
+
+    buffer.left[i] = clamp(inputLeft * gain_, -ceiling, ceiling);
+    buffer.right[i] = clamp(inputRight * gain_, -ceiling, ceiling);
+  }
+}
+
+void Saturate3Processor::prepare(double sampleRate) {
+  sampleRate_ = sampleRate;
+}
+
+void Saturate3Processor::setParams(const Params& params) {
+  params_ = params;
+}
+
+void Saturate3Processor::reset() {}
+
+void Saturate3Processor::process(AudioBufferView buffer) {
+  if (!buffer.left || !buffer.right || buffer.numSamples == 0) {
+    return;
+  }
+
+  const float mix = clamp(params_.mix, 0.0f, 1.0f);
+  const float lowDrive = dbToLinear(params_.low.driveDb);
+  const float midDrive = dbToLinear(params_.mid.driveDb);
+  const float highDrive = dbToLinear(params_.high.driveDb);
+  const float mixSum =
+      std::max(1.0f, params_.low.mix + params_.mid.mix + params_.high.mix);
+
+  for (std::size_t i = 0; i < buffer.numSamples; ++i) {
+    const float inputLeft = buffer.left[i];
+    const float inputRight = buffer.right[i];
+
+    const float satLeft =
+        (std::tanh(inputLeft * lowDrive) * params_.low.mix +
+         std::tanh(inputLeft * midDrive) * params_.mid.mix +
+         std::tanh(inputLeft * highDrive) * params_.high.mix) /
+        mixSum;
+
+    const float satRight =
+        (std::tanh(inputRight * lowDrive) * params_.low.mix +
+         std::tanh(inputRight * midDrive) * params_.mid.mix +
+         std::tanh(inputRight * highDrive) * params_.high.mix) /
+        mixSum;
+
+    buffer.left[i] = inputLeft * (1.0f - mix) + satLeft * mix;
+    buffer.right[i] = inputRight * (1.0f - mix) + satRight * mix;
+  }
+}
+
+void TapeDelayProcessor::prepare(double sampleRate) {
+  sampleRate_ = sampleRate;
+  const std::size_t maxSamples =
+      static_cast<std::size_t>(std::max(1.0, sampleRate_ * 2.0));
+  delayLeft_.assign(maxSamples, 0.0f);
+  delayRight_.assign(maxSamples, 0.0f);
+  updateDelaySamples();
+  reset();
+}
+
+void TapeDelayProcessor::setParams(const Params& params) {
+  params_ = params;
+  updateDelaySamples();
+}
+
+void TapeDelayProcessor::reset() {
+  std::fill(delayLeft_.begin(), delayLeft_.end(), 0.0f);
+  std::fill(delayRight_.begin(), delayRight_.end(), 0.0f);
+  writeIndex_ = 0;
+}
+
+void TapeDelayProcessor::updateDelaySamples() {
+  if (sampleRate_ <= 0.0 || delayLeft_.empty()) {
+    delaySamples_ = 1;
+    return;
+  }
+
+  const float clampedTime = clamp(params_.timeMs, 1.0f, 2000.0f);
+  const std::size_t desired =
+      static_cast<std::size_t>(clampedTime * 0.001f * sampleRate_);
+  delaySamples_ = std::min(desired, delayLeft_.size() - 1);
+}
+
+void TapeDelayProcessor::process(AudioBufferView buffer) {
+  if (!buffer.left || !buffer.right || buffer.numSamples == 0 ||
+      delayLeft_.empty()) {
+    return;
+  }
+
+  const float mix = clamp(params_.mix, 0.0f, 1.0f);
+  const float feedback = clamp(params_.feedback, 0.0f, 0.95f);
+
+  for (std::size_t i = 0; i < buffer.numSamples; ++i) {
+    const float inputLeft = buffer.left[i];
+    const float inputRight = buffer.right[i];
+
+    const std::size_t readIndex =
+        (writeIndex_ + delayLeft_.size() - delaySamples_) % delayLeft_.size();
+    const float delayedLeft = delayLeft_[readIndex];
+    const float delayedRight = delayRight_[readIndex];
+
+    buffer.left[i] = inputLeft * (1.0f - mix) + delayedLeft * mix;
+    buffer.right[i] = inputRight * (1.0f - mix) + delayedRight * mix;
+
+    const float feedbackLeft = inputLeft + delayedLeft * feedback;
+    const float feedbackRight = inputRight + delayedRight * feedback;
+
+    if (params_.pingPong) {
+      delayLeft_[writeIndex_] = feedbackRight;
+      delayRight_[writeIndex_] = feedbackLeft;
+    } else {
+      delayLeft_[writeIndex_] = feedbackLeft;
+      delayRight_[writeIndex_] = feedbackRight;
+    }
+
+    writeIndex_ = (writeIndex_ + 1) % delayLeft_.size();
+  }
+}
+
+void ConvolutionReverbProcessor::prepare(double sampleRate) {
+  sampleRate_ = sampleRate;
+  resizeHistory();
+  reset();
+}
+
+void ConvolutionReverbProcessor::setParams(const Params& params) {
+  params_ = params;
+  resizeHistory();
+}
+
+void ConvolutionReverbProcessor::setImpulse(std::vector<float> impulse) {
+  if (impulse.empty()) {
+    impulse = {1.0f};
+  }
+  impulse_ = std::move(impulse);
+  resizeHistory();
+}
+
+void ConvolutionReverbProcessor::reset() {
+  std::fill(historyLeft_.begin(), historyLeft_.end(), 0.0f);
+  std::fill(historyRight_.begin(), historyRight_.end(), 0.0f);
+  writeIndex_ = 0;
+}
+
+void ConvolutionReverbProcessor::resizeHistory() {
+  if (sampleRate_ <= 0.0) {
+    return;
+  }
+  preDelaySamples_ =
+      static_cast<std::size_t>(std::max(0.0f, params_.preDelayMs) * 0.001f *
+                               static_cast<float>(sampleRate_));
+  const std::size_t historySize =
+      std::max<std::size_t>(impulse_.size() + preDelaySamples_ + 1, 1);
+  historyLeft_.assign(historySize, 0.0f);
+  historyRight_.assign(historySize, 0.0f);
+  writeIndex_ = 0;
+}
+
+void ConvolutionReverbProcessor::process(AudioBufferView buffer) {
+  if (!buffer.left || !buffer.right || buffer.numSamples == 0 ||
+      historyLeft_.empty()) {
+    return;
+  }
+
+  const float mix = clamp(params_.mix, 0.0f, 1.0f);
+  const std::size_t historySize = historyLeft_.size();
+
+  for (std::size_t i = 0; i < buffer.numSamples; ++i) {
+    const float inputLeft = buffer.left[i];
+    const float inputRight = buffer.right[i];
+
+    historyLeft_[writeIndex_] = inputLeft;
+    historyRight_[writeIndex_] = inputRight;
+
+    const std::size_t startIndex =
+        (writeIndex_ + historySize - (preDelaySamples_ % historySize)) %
+        historySize;
+
+    float sumLeft = 0.0f;
+    float sumRight = 0.0f;
+    for (std::size_t j = 0; j < impulse_.size(); ++j) {
+      const std::size_t idx = (startIndex + historySize - j) % historySize;
+      sumLeft += historyLeft_[idx] * impulse_[j];
+      sumRight += historyRight_[idx] * impulse_[j];
+    }
+
+    buffer.left[i] = inputLeft * (1.0f - mix) + sumLeft * mix;
+    buffer.right[i] = inputRight * (1.0f - mix) + sumRight * mix;
+
+    writeIndex_ = (writeIndex_ + 1) % historySize;
+  }
+}
+
+}  // namespace tap

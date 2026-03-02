@@ -6,3 +6,6 @@ The full JSON scaffold for the suite lives in the `Tap Plugins` file (no extensi
 
 ## Readiness (10–20%)
 The initial readiness checklist for each plugin is tracked in `docs/readiness.md`.
+
+## Scaffolding code
+Early DSP scaffolding lives in `src/` as standalone C++ processors for each plugin.
