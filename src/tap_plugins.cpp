@@ -17,15 +17,15 @@ void RelayProcessor::setParams(const Params& params) {
 }
 
 void RelayProcessor::reset() {
-  hpLeft_.reset();
-  hpRight_.reset();
+  hpLowpassLeft_.reset();
+  hpLowpassRight_.reset();
   lpLeft_.reset();
   lpRight_.reset();
 }
 
 void RelayProcessor::updateFilters() {
-  hpLeft_.setCutoff(params_.hpFreq, sampleRate_);
-  hpRight_.setCutoff(params_.hpFreq, sampleRate_);
+  hpLowpassLeft_.setCutoff(params_.hpFreq, sampleRate_);
+  hpLowpassRight_.setCutoff(params_.hpFreq, sampleRate_);
   lpLeft_.setCutoff(params_.lpFreq, sampleRate_);
   lpRight_.setCutoff(params_.lpFreq, sampleRate_);
 }
@@ -51,8 +51,8 @@ void RelayProcessor::process(AudioBufferView buffer) {
       right = -right;
     }
 
-    left = left - hpLeft_.process(left);
-    right = right - hpRight_.process(right);
+    left = left - hpLowpassLeft_.process(left);
+    right = right - hpLowpassRight_.process(right);
     left = lpLeft_.process(left);
     right = lpRight_.process(right);
 
@@ -138,29 +138,55 @@ float CompressorProcessor::gainReductionDb() const {
 
 void EqProcessor::prepare(double sampleRate) {
   sampleRate_ = sampleRate;
+  updateFilters();
 }
 
 void EqProcessor::setParams(const Params& params) {
   params_ = params;
+  updateFilters();
 }
 
-void EqProcessor::reset() {}
+void EqProcessor::reset() {
+  for (auto& filter : leftFilters_) {
+    filter.reset();
+  }
+  for (auto& filter : rightFilters_) {
+    filter.reset();
+  }
+}
+
+void EqProcessor::updateFilters() {
+  for (std::size_t index = 0; index < params_.bands.size(); ++index) {
+    const auto& band = params_.bands[index];
+    if (band.enabled) {
+      leftFilters_[index].setPeaking(band.frequency, band.q, band.gainDb,
+                                     sampleRate_);
+      rightFilters_[index].setPeaking(band.frequency, band.q, band.gainDb,
+                                      sampleRate_);
+    } else {
+      leftFilters_[index].setBypass();
+      rightFilters_[index].setBypass();
+    }
+  }
+}
 
 void EqProcessor::process(AudioBufferView buffer) {
   if (!buffer.left || !buffer.right || buffer.numSamples == 0) {
     return;
   }
 
-  float gain = 1.0f;
-  for (const auto& band : params_.bands) {
-    if (band.enabled) {
-      gain *= dbToLinear(band.gainDb);
-    }
-  }
-
   for (std::size_t i = 0; i < buffer.numSamples; ++i) {
-    buffer.left[i] *= gain;
-    buffer.right[i] *= gain;
+    float left = buffer.left[i];
+    float right = buffer.right[i];
+
+    for (std::size_t bandIndex = 0; bandIndex < leftFilters_.size();
+         ++bandIndex) {
+      left = leftFilters_[bandIndex].process(left);
+      right = rightFilters_[bandIndex].process(right);
+    }
+
+    buffer.left[i] = left;
+    buffer.right[i] = right;
   }
 }
 
@@ -223,8 +249,10 @@ void Saturate3Processor::process(AudioBufferView buffer) {
   const float lowDrive = dbToLinear(params_.low.driveDb);
   const float midDrive = dbToLinear(params_.mid.driveDb);
   const float highDrive = dbToLinear(params_.high.driveDb);
-  const float mixSum =
-      std::max(1.0f, params_.low.mix + params_.mid.mix + params_.high.mix);
+  float mixSum = params_.low.mix + params_.mid.mix + params_.high.mix;
+  if (mixSum <= 0.0f) {
+    mixSum = 1.0f;
+  }
 
   for (std::size_t i = 0; i < buffer.numSamples; ++i) {
     const float inputLeft = buffer.left[i];
@@ -372,8 +400,7 @@ void ConvolutionReverbProcessor::process(AudioBufferView buffer) {
     historyRight_[writeIndex_] = inputRight;
 
     const std::size_t startIndex =
-        (writeIndex_ + historySize - (preDelaySamples_ % historySize)) %
-        historySize;
+        (writeIndex_ + historySize - preDelaySamples_) % historySize;
 
     float sumLeft = 0.0f;
     float sumRight = 0.0f;

@@ -29,8 +29,8 @@ class RelayProcessor {
 
   Params params_{};
   double sampleRate_ = 0.0;
-  OnePoleLowpass hpLeft_;
-  OnePoleLowpass hpRight_;
+  OnePoleLowpass hpLowpassLeft_;
+  OnePoleLowpass hpLowpassRight_;
   OnePoleLowpass lpLeft_;
   OnePoleLowpass lpRight_;
 };
@@ -85,8 +85,12 @@ class EqProcessor {
   void process(AudioBufferView buffer);
 
  private:
+  void updateFilters();
+
   Params params_{};
   double sampleRate_ = 0.0;
+  std::array<Biquad, 6> leftFilters_{};
+  std::array<Biquad, 6> rightFilters_{};
 };
 
 class LimiterProcessor {
