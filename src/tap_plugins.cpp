@@ -635,8 +635,9 @@ void LimiterProcessor::process(AudioBufferView buffer) {
     if (params_.mode == Mode::Hardware) {
       // Hardware mode: slightly slower attack (vintage behavior)
       attackCoeff = 0.3f;
-      releaseCoeff = releaseCoeff_ * 1.2f;  // Slower release
-      releaseCoeff2 = releaseCoeff2_ * 1.2f;
+      // Slower release, but ensure coefficient remains stable (< 1.0)
+      releaseCoeff = std::clamp(releaseCoeff_ * 1.2f, 0.0f, 0.9999f);
+      releaseCoeff2 = std::clamp(releaseCoeff2_ * 1.2f, 0.0f, 0.9999f);
     } else if (params_.mode == Mode::Digital) {
       // Digital mode: ultra-fast attack, precise
       attackCoeff = 0.0f;
