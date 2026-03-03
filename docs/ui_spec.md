@@ -249,7 +249,7 @@ LUFS history graph (last 30 s) + true-peak ceiling line + gain-reduction bar.
 ```
 
 - **Mode** — 3-way toggle (Transparent / Hardware / Digital) controls character and saturation.
-  - Transparent: Very subtle saturation, fast release.
+  - Transparent: Very subtle saturation, standard (neutral) release.
   - Hardware: Tape-like saturation, slower release, vintage sound.
   - Digital: Clean limiting, minimal color, ultra-precise.
 
