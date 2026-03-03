@@ -1,14 +1,20 @@
-# Plugin Readiness (75–100%)
+# Plugin Readiness (85–100%)
 
 This checklist tracks practical readiness for each plugin.
 **50% readiness** = Core DSP working with real-world parameters, metering/state wired, parameter smoothing, multi-mode behaviour.
 **75% readiness** = Full signal chain, lookahead/oversampling, per-band processing, modulation, preset-ready parameters.
+**85% readiness** = Sonic enhancements, classic emulations, smart features, recording state awareness.
 
 ## UI Specification
 - [x] Big-screen visual layout defined in `docs/ui_spec.md`.
 - [x] EQ: draggable band handles on live spectrum + magnitude curve (uses `computeMagnitudeDb`).
+- [x] EQ: Classic curve emulations (Neve 1073, API 550, SSL 4000, Pultec) with saturation.
+- [x] EQ: Per-band saturation controls for mild harmonic color.
 - [x] Compressor: transfer-curve pane + scrolling gain-reduction history strip.
+- [x] Compressor: Lookahead control for smoother attack on transients.
+- [x] Limiter: Mode selector (Transparent/Hardware/Digital) with character variations.
 - [x] Tape Delay: input/wet meter bars show ducking in action; Duck controls row clearly labelled.
+- [x] Relay: Recording indicator and Smart Deactivate toggle.
 - [x] Shared glassmorphic shell: header with Track Role menu, Smart Setup button, Settings popover.
 - [x] Window size presets (Small 800×500 / Medium 1200×700 / Large 1600×900).
 - [ ] JUCE Component implementation of EQ spectrum canvas.
@@ -22,6 +28,7 @@ This checklist tracks practical readiness for each plugin.
 - [x] Parameter smoothing on gain and pan to prevent zipper noise.
 - [x] Mid/side width processing.
 - [x] LUFS integrated metering (ITU-R BS.1770 K-weighted, via `LufsMeter`).
+- [x] Smart Deactivate: bypass processing during recording when enabled.
 - [ ] Relay metadata broadcast via IPC (JUCE InterprocessConnection layer).
 
 ## Compressor
@@ -33,6 +40,7 @@ This checklist tracks practical readiness for each plugin.
 - [x] Auto-makeup gain calculation (`computeAutoMakeupDb`).
 - [x] Sidechain input routing (`processWithSidechain`).
 - [x] Smart setup from track role (`applySmartSetup(TrackRole)`).
+- [x] Lookahead buffer (0–5 ms) for smoother attack on transients.
 
 ## EQ
 - [x] Define 6-band parametric parameters and per-band enable state.
@@ -42,6 +50,8 @@ This checklist tracks practical readiness for each plugin.
 - [x] Correct biquad coefficient calculation for all filter types.
 - [x] Role-based preset loader (`loadRolePreset(TrackRole)`).
 - [x] Frequency-response query (`computeMagnitudeDb(float)`) and `Biquad::magnitudeResponseDb` for drawing the EQ curve in the UI.
+- [x] Classic EQ curve emulations: Neve 1073, API 550, SSL 4000, Pultec (`loadClassicCurve`).
+- [x] Per-band mild saturation control (0–100%) for harmonic color.
 - [ ] Spectrum analyzer overlay (UI layer).
 - [ ] Masking detection helper (requires external FFT spectrum data).
 
@@ -54,6 +64,7 @@ This checklist tracks practical readiness for each plugin.
 - [x] Gain reduction metering.
 - [x] Multi-stage release envelope (two-stage fast/slow ballistics).
 - [x] Streaming-safe mode presets (`makeStreamingPreset`: Spotify, YouTube, Apple Music).
+- [x] Mode variations (Transparent, Hardware, Digital) with character-specific saturation and time constants.
 
 ## Saturate3
 - [x] Define per-band drive/shape/mix parameters for three bands.
