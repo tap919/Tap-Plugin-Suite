@@ -684,14 +684,14 @@ float LimiterProcessor::applySaturation(float x, Mode mode) const {
   switch (mode) {
     case Mode::Hardware:
       // Soft saturation like analog hardware (tape-style)
-      return std::tanh(x * 1.2f) * 0.9f;
+      return std::tanh(x * 1.2f) * (1.0f / 1.2f);
     case Mode::Digital:
       // Clean digital limiting with minimal color
       return x;
     case Mode::Transparent:
     default:
       // Very subtle saturation for smoothness
-      return std::tanh(x * 1.05f) * 0.98f;
+      return std::tanh(x * 1.05f) * (1.0f / 1.05f);
   }
 }
 
