@@ -195,8 +195,16 @@ void CompressorProcessor::processWithSidechain(AudioBufferView buffer,
       float futurePeak = 0.0f;
       for (std::size_t j = 0; j < lookaheadSamples_; ++j) {
         const std::size_t idx = (lookaheadWriteIndex_ + bufSize - j) % bufSize;
-        const float detL = hasSidechain ? sidechain.left[i] : lookaheadLeft_[idx];
-        const float detR = hasSidechain ? sidechain.right[i] : lookaheadRight_[idx];
+        float detL = 0.0f;
+        float detR = 0.0f;
+        if (hasSidechain) {
+          const std::size_t scIndex = std::min(i + j, buffer.numSamples - 1);
+          detL = sidechain.left[scIndex];
+          detR = sidechain.right[scIndex];
+        } else {
+          detL = lookaheadLeft_[idx];
+          detR = lookaheadRight_[idx];
+        }
         const float peak = std::max(std::abs(detL), std::abs(detR));
         if (peak > futurePeak) futurePeak = peak;
       }
