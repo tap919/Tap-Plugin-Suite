@@ -66,9 +66,9 @@ an ocean of parameters.
   evaluated at ~512 log-spaced points; rendered as a bright white line with a
   soft glow.
 - **Band handles** — one draggable circle per enabled band placed at its centre
-  frequency on the curve.  
-  - Drag left/right → changes frequency.  
-  - Drag up/down → changes gain (±18 dB).  
+  frequency on the curve.
+  - Drag left/right → changes frequency.
+  - Drag up/down → changes gain (±18 dB).
   - Scroll wheel / pinch → changes Q.
 - **Band highlight** — clicking a handle activates that band's parameter row
   below and fills its frequency region with a translucent colour.
@@ -83,6 +83,7 @@ Six band strips (one per biquad), laid out horizontally:
   Freq knob  Freq     Freq      Freq      Freq      Freq
   ——        Gain      Gain      Gain      Gain      ——
   ——        Q         Q         Q         Q         ——
+  ——        Sat       Sat       Sat       Sat       ——
   [ON/OFF]  [ON/OFF]  [ON/OFF]  [ON/OFF]  [ON/OFF]  [ON/OFF]
 ```
 
@@ -90,11 +91,14 @@ Six band strips (one per biquad), laid out horizontally:
 - **Freq knob** — 20 Hz–20 kHz, logarithmic.
 - **Gain knob** — −18 to +18 dB (hidden for HPF/LPF).
 - **Q knob** — 0.1–10 (hidden for shelves).
+- **Sat knob** — 0–100% mild saturation for harmonic color (tape-style).
 - **On/Off toggle** — lights up when band is active.
 
 ### Menu options (Settings popover, EQ-specific)
 - **Role Preset** drop-down — LeadVocal Tight, LeadVocal Bright, 808 Scoop,
   DrumBus Glue, Master Balanced, FX Open, Manual.
+- **Classic Curve** drop-down — None, Neve 1073, API 550, SSL 4000, Pultec
+  (loads classic EQ emulation curves with preset saturation).
 - **Masking Overlay** — select a reference track (Kick, Snare, Piano, Synth,
   None) to ghost its spectrum behind the active spectrum.
 
@@ -135,8 +139,8 @@ Two panes side-by-side:
 ### Controls row
 
 ```
-[VCA | Opto | VariMu]   Threshold  Ratio   Attack   Release   Knee   Makeup   Mix
-       3-way toggle       knob      knob    knob      knob     knob    knob   slider
+[VCA | Opto | VariMu]   Threshold  Ratio   Attack   Release   Knee   Makeup   Mix   Lookahead
+       3-way toggle       knob      knob    knob      knob     knob    knob   slider   knob
 ```
 
 - **Mode** — 3-way illuminated toggle (VCA / Opto / Vari-Mu); changes the
@@ -148,6 +152,7 @@ Two panes side-by-side:
 - **Knee** knob — 0 (hard) to 12 dB (soft).
 - **Makeup** knob — −24 to +24 dB; shows "A" badge when auto-makeup is active.
 - **Mix** slider — 0–100% (parallel compression).
+- **Lookahead** knob — 0–5 ms for smoother attack on transients.
 
 ### Menu options (Settings popover, Compressor-specific)
 - **Sidechain Source** — Internal, Key In, Track: Kick, Track: Vocal.
@@ -219,12 +224,16 @@ most of the complexity automatically.
 
 ### Big-screen area
 Large stereo level meter (peak + RMS + LUFS readout), wide layout.
+**Recording indicator** — bright red "REC" badge when DAW is recording.
 
 ### Controls row
 ```
-  In Gain    HP Freq    LP Freq    Pan    Width    Phase    Out Gain
-   knob       knob       knob     knob    knob    toggle     knob
+  In Gain    HP Freq    LP Freq    Pan    Width    Phase    Out Gain    Smart Deactivate
+   knob       knob       knob     knob    knob    toggle     knob           toggle
 ```
+
+- **Smart Deactivate** toggle — when enabled, bypasses all Relay processing
+  during recording to ensure clean, unprocessed tracks are captured.
 
 ---
 
@@ -235,9 +244,14 @@ LUFS history graph (last 30 s) + true-peak ceiling line + gain-reduction bar.
 
 ### Controls row
 ```
-  Ceiling   Threshold   Release   Lookahead   True Peak   Streaming Safe
-   knob       knob       knob      knob        toggle       menu
+  Ceiling   Threshold   Release   Lookahead   Mode              True Peak   Streaming Safe
+   knob       knob       knob      knob     3-way toggle         toggle       menu
 ```
+
+- **Mode** — 3-way toggle (Transparent / Hardware / Digital) controls character and saturation.
+  - Transparent: Very subtle saturation, standard (neutral) release.
+  - Hardware: Tape-like saturation, slower release, vintage sound.
+  - Digital: Clean limiting, minimal color, ultra-precise.
 
 ---
 

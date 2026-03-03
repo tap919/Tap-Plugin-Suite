@@ -49,6 +49,16 @@ void RelayProcessor::process(AudioBufferView buffer) {
     return;
   }
 
+  // Smart deactivation: bypass processing when recording if enabled
+  if (params_.smartDeactivate && params_.isRecording) {
+    // Pass through audio unchanged when recording with smart deactivate enabled
+    // Still update meters so the user can see levels
+    constexpr float kMeterDecay = 0.95f;
+    meters_.update(buffer.left, buffer.right, buffer.numSamples, kMeterDecay);
+    lufsMeter_.process(buffer.left, buffer.right, buffer.numSamples);
+    return;
+  }
+
   const float targetGainIn = dbToLinear(params_.gainInDb);
   const float targetGainOut = dbToLinear(params_.gainOutDb);
   const float targetPan = clamp(params_.pan, -1.0f, 1.0f);
@@ -98,18 +108,23 @@ void RelayProcessor::process(AudioBufferView buffer) {
 void CompressorProcessor::prepare(double sampleRate) {
   sampleRate_ = sampleRate;
   updateTimeConstants();
+  updateLookahead();
   reset();
 }
 
 void CompressorProcessor::setParams(const Params& params) {
   params_ = params;
   updateTimeConstants();
+  updateLookahead();
 }
 
 void CompressorProcessor::reset() {
   envelope_ = 0.0f;
   gain_ = 1.0f;
   gainReductionDb_ = 0.0f;
+  std::fill(lookaheadLeft_.begin(), lookaheadLeft_.end(), 0.0f);
+  std::fill(lookaheadRight_.begin(), lookaheadRight_.end(), 0.0f);
+  lookaheadWriteIndex_ = 0;
 }
 
 void CompressorProcessor::updateTimeConstants() {
@@ -121,6 +136,24 @@ void CompressorProcessor::updateTimeConstants() {
   }
   attackCoeff_ = timeMsToCoeff(params_.attackMs * modeScale, sampleRate_);
   releaseCoeff_ = timeMsToCoeff(params_.releaseMs * modeScale, sampleRate_);
+}
+
+void CompressorProcessor::updateLookahead() {
+  if (sampleRate_ <= 0.0) {
+    return;
+  }
+  const float ms = clamp(params_.lookaheadMs, 0.0f, 5.0f);
+  lookaheadSamples_ =
+      static_cast<std::size_t>(ms * 0.001f * static_cast<float>(sampleRate_));
+  if (lookaheadSamples_ < 1) {
+    lookaheadSamples_ = 1;
+  }
+  const std::size_t bufSize = lookaheadSamples_ + 1;
+  if (lookaheadLeft_.size() != bufSize) {
+    lookaheadLeft_.assign(bufSize, 0.0f);
+    lookaheadRight_.assign(bufSize, 0.0f);
+    lookaheadWriteIndex_ = 0;
+  }
 }
 
 void CompressorProcessor::process(AudioBufferView buffer) {
@@ -142,17 +175,46 @@ void CompressorProcessor::processWithSidechain(AudioBufferView buffer,
 
   const bool hasSidechain = sidechain.left && sidechain.right &&
                              sidechain.numSamples == buffer.numSamples;
+  const bool useLookahead = lookaheadSamples_ > 1 && !lookaheadLeft_.empty();
+  const std::size_t bufSize = lookaheadLeft_.size();
 
   for (std::size_t i = 0; i < buffer.numSamples; ++i) {
     const float inputLeft = buffer.left[i];
     const float inputRight = buffer.right[i];
 
+    // When lookahead is enabled, write to lookahead buffer
+    if (useLookahead) {
+      lookaheadLeft_[lookaheadWriteIndex_] = inputLeft;
+      lookaheadRight_[lookaheadWriteIndex_] = inputRight;
+    }
+
     // Use sidechain for detection when provided, otherwise use input.
-    const float detL = hasSidechain ? sidechain.left[i] : inputLeft;
-    const float detR = hasSidechain ? sidechain.right[i] : inputRight;
-    const float peak = std::max(std::abs(detL), std::abs(detR));
-    const float detectorDb =
-        peak > 1.0e-6f ? linearToDb(peak) : kDetectorFloorDb;
+    // When lookahead is active, scan ahead to detect future peaks.
+    float detectorDb = kDetectorFloorDb;
+    if (useLookahead) {
+      float futurePeak = 0.0f;
+      for (std::size_t j = 0; j < lookaheadSamples_; ++j) {
+        const std::size_t idx = (lookaheadWriteIndex_ + bufSize - j) % bufSize;
+        float detL = 0.0f;
+        float detR = 0.0f;
+        if (hasSidechain) {
+          const std::size_t scIndex = std::min(i + j, buffer.numSamples - 1);
+          detL = sidechain.left[scIndex];
+          detR = sidechain.right[scIndex];
+        } else {
+          detL = lookaheadLeft_[idx];
+          detR = lookaheadRight_[idx];
+        }
+        const float peak = std::max(std::abs(detL), std::abs(detR));
+        if (peak > futurePeak) futurePeak = peak;
+      }
+      detectorDb = futurePeak > 1.0e-6f ? linearToDb(futurePeak) : kDetectorFloorDb;
+    } else {
+      const float detL = hasSidechain ? sidechain.left[i] : inputLeft;
+      const float detR = hasSidechain ? sidechain.right[i] : inputRight;
+      const float peak = std::max(std::abs(detL), std::abs(detR));
+      detectorDb = peak > 1.0e-6f ? linearToDb(peak) : kDetectorFloorDb;
+    }
 
     const float overDb = detectorDb - thresholdDb;
     float gainDb = 0.0f;
@@ -172,11 +234,22 @@ void CompressorProcessor::processWithSidechain(AudioBufferView buffer,
       gain_ = releaseCoeff_ * gain_ + (1.0f - releaseCoeff_) * targetGain;
     }
 
-    const float wetLeft = inputLeft * gain_ * makeupGain;
-    const float wetRight = inputRight * gain_ * makeupGain;
+    // Read delayed samples when lookahead is active
+    float processLeft = inputLeft;
+    float processRight = inputRight;
+    if (useLookahead) {
+      const std::size_t readIdx =
+          (lookaheadWriteIndex_ + bufSize - lookaheadSamples_ + 1) % bufSize;
+      processLeft = lookaheadLeft_[readIdx];
+      processRight = lookaheadRight_[readIdx];
+      lookaheadWriteIndex_ = (lookaheadWriteIndex_ + 1) % bufSize;
+    }
 
-    buffer.left[i] = wetLeft * mix + inputLeft * (1.0f - mix);
-    buffer.right[i] = wetRight * mix + inputRight * (1.0f - mix);
+    const float wetLeft = processLeft * gain_ * makeupGain;
+    const float wetRight = processRight * gain_ * makeupGain;
+
+    buffer.left[i] = wetLeft * mix + processLeft * (1.0f - mix);
+    buffer.right[i] = wetRight * mix + processRight * (1.0f - mix);
   }
 
   // Store gain reduction as a positive dB value (0 dB = no reduction).
@@ -328,6 +401,13 @@ void EqProcessor::process(AudioBufferView buffer) {
          ++bandIndex) {
       left = leftFilters_[bandIndex].process(left);
       right = rightFilters_[bandIndex].process(right);
+
+      // Apply mild saturation after each enabled band if saturation > 0
+      const auto& band = params_.bands[bandIndex];
+      if (band.enabled && band.saturation > 0.0f) {
+        left = applySaturation(left, band.saturation);
+        right = applySaturation(right, band.saturation);
+      }
     }
 
     buffer.left[i] = left;
@@ -335,59 +415,121 @@ void EqProcessor::process(AudioBufferView buffer) {
   }
 }
 
+float EqProcessor::applySaturation(float x, float amount) const {
+  if (amount <= 0.0f) return x;
+  // Mild tape-style saturation with adjustable amount
+  // At amount=0, no saturation; at amount=1, moderate harmonic color
+  const float drive = 1.0f + amount * 0.5f;  // 1.0 to 1.5x drive
+  return std::tanh(x * drive) / std::tanh(drive);
+}
+
 void EqProcessor::loadRolePreset(TrackRole role) {
   // Reset all bands to unity/disabled first.
   for (auto& band : params_.bands) {
-    band = {1000.0f, 0.0f, 0.707f, BandType::Peak, false};
+    band = {1000.0f, 0.0f, 0.707f, BandType::Peak, false, 0.0f};
   }
 
   switch (role) {
     case TrackRole::LeadVocal:
-      params_.bands[0] = {80.0f, 0.0f, 0.707f, BandType::LowCut, true};
-      params_.bands[1] = {300.0f, -2.5f, 1.2f, BandType::Peak, true};
-      params_.bands[2] = {4000.0f, 2.5f, 1.5f, BandType::Peak, true};
-      params_.bands[3] = {10000.0f, 2.0f, 0.707f, BandType::HighShelf, true};
+      params_.bands[0] = {80.0f, 0.0f, 0.707f, BandType::LowCut, true, 0.0f};
+      params_.bands[1] = {300.0f, -2.5f, 1.2f, BandType::Peak, true, 0.0f};
+      params_.bands[2] = {4000.0f, 2.5f, 1.5f, BandType::Peak, true, 0.0f};
+      params_.bands[3] = {10000.0f, 2.0f, 0.707f, BandType::HighShelf, true, 0.0f};
       break;
     case TrackRole::AdLib:
-      params_.bands[0] = {100.0f, 0.0f, 0.707f, BandType::LowCut, true};
-      params_.bands[1] = {350.0f, -2.0f, 1.2f, BandType::Peak, true};
-      params_.bands[2] = {5000.0f, 2.0f, 1.2f, BandType::Peak, true};
+      params_.bands[0] = {100.0f, 0.0f, 0.707f, BandType::LowCut, true, 0.0f};
+      params_.bands[1] = {350.0f, -2.0f, 1.2f, BandType::Peak, true, 0.0f};
+      params_.bands[2] = {5000.0f, 2.0f, 1.2f, BandType::Peak, true, 0.0f};
       break;
     case TrackRole::Bass808:
     case TrackRole::Bass:
-      params_.bands[0] = {30.0f, 0.0f, 0.707f, BandType::LowCut, true};
-      params_.bands[1] = {80.0f, 2.0f, 1.0f, BandType::Peak, true};
-      params_.bands[2] = {250.0f, -3.0f, 1.2f, BandType::Peak, true};
-      params_.bands[3] = {2500.0f, 1.5f, 1.0f, BandType::Peak, true};
+      params_.bands[0] = {30.0f, 0.0f, 0.707f, BandType::LowCut, true, 0.0f};
+      params_.bands[1] = {80.0f, 2.0f, 1.0f, BandType::Peak, true, 0.0f};
+      params_.bands[2] = {250.0f, -3.0f, 1.2f, BandType::Peak, true, 0.0f};
+      params_.bands[3] = {2500.0f, 1.5f, 1.0f, BandType::Peak, true, 0.0f};
       break;
     case TrackRole::Drums:
-      params_.bands[0] = {60.0f, 0.0f, 0.707f, BandType::LowCut, true};
-      params_.bands[1] = {200.0f, -2.0f, 1.0f, BandType::Peak, true};
-      params_.bands[2] = {5000.0f, 2.5f, 1.2f, BandType::Peak, true};
-      params_.bands[3] = {12000.0f, 1.5f, 0.707f, BandType::HighShelf, true};
+      params_.bands[0] = {60.0f, 0.0f, 0.707f, BandType::LowCut, true, 0.0f};
+      params_.bands[1] = {200.0f, -2.0f, 1.0f, BandType::Peak, true, 0.0f};
+      params_.bands[2] = {5000.0f, 2.5f, 1.2f, BandType::Peak, true, 0.0f};
+      params_.bands[3] = {12000.0f, 1.5f, 0.707f, BandType::HighShelf, true, 0.0f};
       break;
     case TrackRole::Piano:
-      params_.bands[0] = {80.0f, 0.0f, 0.707f, BandType::LowCut, true};
-      params_.bands[1] = {200.0f, -1.5f, 1.0f, BandType::Peak, true};
-      params_.bands[2] = {3000.0f, 1.5f, 1.0f, BandType::Peak, true};
+      params_.bands[0] = {80.0f, 0.0f, 0.707f, BandType::LowCut, true, 0.0f};
+      params_.bands[1] = {200.0f, -1.5f, 1.0f, BandType::Peak, true, 0.0f};
+      params_.bands[2] = {3000.0f, 1.5f, 1.0f, BandType::Peak, true, 0.0f};
       break;
     case TrackRole::Synth:
-      params_.bands[0] = {60.0f, 0.0f, 0.707f, BandType::LowCut, true};
-      params_.bands[1] = {500.0f, -1.5f, 1.0f, BandType::Peak, true};
-      params_.bands[2] = {8000.0f, 1.5f, 0.707f, BandType::HighShelf, true};
+      params_.bands[0] = {60.0f, 0.0f, 0.707f, BandType::LowCut, true, 0.0f};
+      params_.bands[1] = {500.0f, -1.5f, 1.0f, BandType::Peak, true, 0.0f};
+      params_.bands[2] = {8000.0f, 1.5f, 0.707f, BandType::HighShelf, true, 0.0f};
       break;
     case TrackRole::Guitar:
-      params_.bands[0] = {100.0f, 0.0f, 0.707f, BandType::LowCut, true};
-      params_.bands[1] = {300.0f, -2.0f, 1.0f, BandType::Peak, true};
-      params_.bands[2] = {2500.0f, 2.0f, 1.2f, BandType::Peak, true};
-      params_.bands[3] = {8000.0f, 1.0f, 0.707f, BandType::HighShelf, true};
+      params_.bands[0] = {100.0f, 0.0f, 0.707f, BandType::LowCut, true, 0.0f};
+      params_.bands[1] = {300.0f, -2.0f, 1.0f, BandType::Peak, true, 0.0f};
+      params_.bands[2] = {2500.0f, 2.0f, 1.2f, BandType::Peak, true, 0.0f};
+      params_.bands[3] = {8000.0f, 1.0f, 0.707f, BandType::HighShelf, true, 0.0f};
       break;
     case TrackRole::FXSend:
-      params_.bands[0] = {200.0f, 0.0f, 0.707f, BandType::LowCut, true};
-      params_.bands[1] = {8000.0f, 0.0f, 0.707f, BandType::HighCut, true};
+      params_.bands[0] = {200.0f, 0.0f, 0.707f, BandType::LowCut, true, 0.0f};
+      params_.bands[1] = {8000.0f, 0.0f, 0.707f, BandType::HighCut, true, 0.0f};
       break;
     default:
       // Generic: leave all bands disabled.
+      break;
+  }
+  updateFilters();
+}
+
+void EqProcessor::loadClassicCurve(ClassicCurve curve) {
+  // Reset all bands to unity/disabled first.
+  for (auto& band : params_.bands) {
+    band = {1000.0f, 0.0f, 0.707f, BandType::Peak, false, 0.0f};
+  }
+  params_.classicCurve = curve;
+
+  switch (curve) {
+    case ClassicCurve::Neve1073:
+      // Neve 1073: Classic warm British console sound
+      // Fixed frequency shelves with characteristic curves
+      params_.bands[0] = {220.0f, 0.0f, 0.8f, BandType::LowShelf, true, 0.3f};
+      params_.bands[1] = {360.0f, 0.0f, 1.2f, BandType::Peak, true, 0.2f};
+      params_.bands[2] = {3200.0f, 0.0f, 1.0f, BandType::Peak, true, 0.2f};
+      params_.bands[3] = {12000.0f, 0.0f, 0.7f, BandType::HighShelf, true, 0.3f};
+      break;
+
+    case ClassicCurve::API550:
+      // API 550: Proportional Q design (narrow when boosting)
+      // Three overlapping bands with musical frequencies
+      params_.bands[0] = {100.0f, 0.0f, 0.7f, BandType::LowShelf, true, 0.25f};
+      params_.bands[1] = {560.0f, 0.0f, 1.5f, BandType::Peak, true, 0.2f};
+      params_.bands[2] = {3000.0f, 0.0f, 1.3f, BandType::Peak, true, 0.2f};
+      params_.bands[3] = {8000.0f, 0.0f, 1.2f, BandType::Peak, true, 0.2f};
+      params_.bands[4] = {15000.0f, 0.0f, 0.7f, BandType::HighShelf, true, 0.25f};
+      break;
+
+    case ClassicCurve::SSL4000:
+      // SSL 4000: Clean, precise British console
+      // Bell curves with tight Q for surgical work
+      params_.bands[0] = {60.0f, 0.0f, 0.707f, BandType::LowCut, true, 0.0f};
+      params_.bands[1] = {200.0f, 0.0f, 0.8f, BandType::LowShelf, true, 0.15f};
+      params_.bands[2] = {600.0f, 0.0f, 1.5f, BandType::Peak, true, 0.1f};
+      params_.bands[3] = {3000.0f, 0.0f, 1.4f, BandType::Peak, true, 0.1f};
+      params_.bands[4] = {10000.0f, 0.0f, 0.8f, BandType::HighShelf, true, 0.15f};
+      break;
+
+    case ClassicCurve::Pultec:
+      // Pultec EQP-1A: Tube-based passive EQ with gentle curves
+      // Famous for simultaneous boost/cut at low end
+      params_.bands[0] = {30.0f, 0.0f, 0.5f, BandType::LowShelf, true, 0.4f};
+      params_.bands[1] = {100.0f, 0.0f, 0.6f, BandType::Peak, true, 0.3f};
+      params_.bands[2] = {5000.0f, 0.0f, 0.9f, BandType::Peak, true, 0.3f};
+      params_.bands[3] = {12000.0f, 0.0f, 0.6f, BandType::HighShelf, true, 0.4f};
+      break;
+
+    case ClassicCurve::None:
+    default:
+      // No classic curve, leave bands disabled
       break;
   }
   updateFilters();
@@ -485,10 +627,29 @@ void LimiterProcessor::process(AudioBufferView buffer) {
       targetGain = threshold / futurePeak;
     }
 
+    // Apply mode-specific time constant scaling
+    float attackCoeff = 0.0f;  // Instant attack for transparent
+    float releaseCoeff = releaseCoeff_;
+    float releaseCoeff2 = releaseCoeff2_;
+
+    if (params_.mode == Mode::Hardware) {
+      // Hardware mode: slightly slower attack (vintage behavior)
+      attackCoeff = 0.3f;
+      // Slower release, but ensure coefficient remains stable (< 1.0)
+      releaseCoeff = std::clamp(releaseCoeff_ * 1.2f, 0.0f, 0.9999f);
+      releaseCoeff2 = std::clamp(releaseCoeff2_ * 1.2f, 0.0f, 0.9999f);
+    } else if (params_.mode == Mode::Digital) {
+      // Digital mode: ultra-fast attack, precise
+      attackCoeff = 0.0f;
+      releaseCoeff = releaseCoeff_ * 0.8f;  // Faster release
+      releaseCoeff2 = releaseCoeff2_ * 0.8f;
+    }
+
     if (targetGain < gain_) {
-      gain_ = targetGain;  // Instant attack for limiting.
+      // Attack phase
+      gain_ = attackCoeff * gain_ + (1.0f - attackCoeff) * targetGain;
     } else {
-      gain_ = releaseCoeff_ * gain_ + (1.0f - releaseCoeff_) * targetGain;
+      gain_ = releaseCoeff * gain_ + (1.0f - releaseCoeff) * targetGain;
     }
 
     // Two-stage release: slow stage follows fast stage, preventing
@@ -496,22 +657,42 @@ void LimiterProcessor::process(AudioBufferView buffer) {
     if (gain_ < gain2_) {
       gain2_ = gain_;
     } else {
-      gain2_ = releaseCoeff2_ * gain2_ + (1.0f - releaseCoeff2_) * gain_;
+      gain2_ = releaseCoeff2 * gain2_ + (1.0f - releaseCoeff2) * gain_;
     }
     const float outputGain = std::min(gain_, gain2_);
 
     // Read delayed sample from lookahead buffer.
     const std::size_t readIdx =
         (lookaheadWriteIndex_ + bufSize - lookaheadSamples_ + 1) % bufSize;
-    buffer.left[i] =
-        clamp(lookaheadLeft_[readIdx] * outputGain, -ceiling, ceiling);
-    buffer.right[i] =
-        clamp(lookaheadRight_[readIdx] * outputGain, -ceiling, ceiling);
+    float outLeft = lookaheadLeft_[readIdx] * outputGain;
+    float outRight = lookaheadRight_[readIdx] * outputGain;
+
+    // Apply mode-specific saturation
+    outLeft = applySaturation(outLeft, params_.mode);
+    outRight = applySaturation(outRight, params_.mode);
+
+    buffer.left[i] = clamp(outLeft, -ceiling, ceiling);
+    buffer.right[i] = clamp(outRight, -ceiling, ceiling);
 
     lookaheadWriteIndex_ = (lookaheadWriteIndex_ + 1) % bufSize;
   }
 
   gainReductionDb_ = -linearToDb(std::min(gain_, gain2_));
+}
+
+float LimiterProcessor::applySaturation(float x, Mode mode) const {
+  switch (mode) {
+    case Mode::Hardware:
+      // Soft saturation like analog hardware (tape-style)
+      return std::tanh(x * 1.2f) * (1.0f / 1.2f);
+    case Mode::Digital:
+      // Clean digital limiting with minimal color
+      return x;
+    case Mode::Transparent:
+    default:
+      // Very subtle saturation for smoothness
+      return std::tanh(x * 1.05f) * (1.0f / 1.05f);
+  }
 }
 
 LimiterProcessor::Params LimiterProcessor::makeStreamingPreset(

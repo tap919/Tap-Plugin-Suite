@@ -17,6 +17,8 @@ class RelayProcessor {
     bool phaseInvert = false;
     float hpFreq = 20.0f;
     float lpFreq = 20000.0f;
+    bool isRecording = false;  // True when DAW is recording.
+    bool smartDeactivate = false;  // When true, bypass processing during recording.
   };
 
   void prepare(double sampleRate);
@@ -55,6 +57,7 @@ class CompressorProcessor {
     float kneeDb = 0.0f;
     float makeupGainDb = 0.0f;
     float mix = 1.0f;
+    float lookaheadMs = 0.0f;  // Lookahead time (0–5 ms typical).
     Mode mode = Mode::Vca;
   };
 
@@ -72,6 +75,7 @@ class CompressorProcessor {
 
  private:
   void updateTimeConstants();
+  void updateLookahead();
 
   Params params_{};
   double sampleRate_ = 0.0;
@@ -80,11 +84,16 @@ class CompressorProcessor {
   float attackCoeff_ = 0.0f;
   float releaseCoeff_ = 0.0f;
   float gainReductionDb_ = 0.0f;
+  std::vector<float> lookaheadLeft_;
+  std::vector<float> lookaheadRight_;
+  std::size_t lookaheadWriteIndex_ = 0;
+  std::size_t lookaheadSamples_ = 0;
 };
 
 class EqProcessor {
  public:
   enum class BandType { Peak, LowShelf, HighShelf, LowCut, HighCut };
+  enum class ClassicCurve { None, Neve1073, API550, SSL4000, Pultec };
 
   struct Band {
     float frequency = 1000.0f;
@@ -92,10 +101,12 @@ class EqProcessor {
     float q = 0.7f;
     BandType type = BandType::Peak;
     bool enabled = false;
+    float saturation = 0.0f;  // 0=off, 1=full saturation (mild harmonic color).
   };
 
   struct Params {
     std::array<Band, 6> bands{};
+    ClassicCurve classicCurve = ClassicCurve::None;  // Classic EQ emulation
   };
 
   void prepare(double sampleRate);
@@ -104,12 +115,15 @@ class EqProcessor {
   void process(AudioBufferView buffer);
   // Apply a role-based starting EQ curve.
   void loadRolePreset(TrackRole role);
+  // Load a classic EQ curve emulation (Neve, API, SSL, Pultec)
+  void loadClassicCurve(ClassicCurve curve);
   // Compute the combined EQ magnitude response at the given frequency (dB).
   // Sums the response of all enabled bands; useful for drawing the EQ curve.
   float computeMagnitudeDb(float frequency) const;
 
  private:
   void updateFilters();
+  float applySaturation(float x, float amount) const;
 
   Params params_{};
   double sampleRate_ = 0.0;
@@ -119,6 +133,8 @@ class EqProcessor {
 
 class LimiterProcessor {
  public:
+  enum class Mode { Transparent, Hardware, Digital };
+
   struct Params {
     float thresholdDb = -6.0f;
     float ceilingDb = -0.1f;
@@ -126,6 +142,7 @@ class LimiterProcessor {
     float releaseMs2 = 500.0f;  // Slow second-stage release time.
     float lookaheadMs = 1.0f;
     bool truePeak = false;
+    Mode mode = Mode::Transparent;  // Limiter character mode.
   };
 
   enum class StreamingPreset { None, Spotify, YouTube, AppleMusic };
@@ -140,6 +157,7 @@ class LimiterProcessor {
 
  private:
   void updateLookahead();
+  float applySaturation(float x, Mode mode) const;
 
   Params params_{};
   double sampleRate_ = 0.0;
